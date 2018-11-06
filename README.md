@@ -27,6 +27,10 @@ typedef struct {
 typedef struct {
 
   //parametry z enkoderów
+  // m.in.
+  ADSR dla głośności
+  filtry częstotliwości
+  ADSR dla filtrów
 
 } Sound;
 
@@ -39,7 +43,6 @@ typedef struct {
 //globale:
 
 Sound currentSound;
-Note 
 Note currentNotes[];
 Macro macros[];
 
@@ -50,6 +53,28 @@ combine_sounds(){
 
 }
 ```
+
+Kroki
+jest funkcja bazowa
+w jakiś stały prosty sposób dodajemy harmoniczne
+usuwamy je filtrem
+zmieniamy głośność w czasie z ADSR
+
+TERAZ:
+  - ogarnąć metody ( async direct itp ) i wyrzucić śmieci z kodu
+  - terminalowy interfejs
+  - kompilowanie/linkowanie funkcji bazowych
+  - ADSR jak helm z 4 parametrami
+    - funckja która do pewnego momentu rośnie a potem spada
+    - punkt S podczas spadku
+    - A liniowe, D i R śmieszne
+  - filtry częstotliwości
+  - sklejenie wszystkiego w combine_sounds
+
+PÓŹNIEJ:
+  - makra
+  - LFO
+  - efekty
 
 
 
