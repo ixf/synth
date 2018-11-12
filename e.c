@@ -13,6 +13,38 @@
 
 #include <ncurses.h>
 
+typedef struct {} Macro;
+
+typedef struct {
+  float (*adsr)(Note);
+
+} Sound;
+
+typedef struct {
+  clock_t attack;
+  clock_t release;
+  float freq;
+  float phase;
+} Note;
+
+float bad_adsr(Note n){
+  if(n.release == -1){
+    return 1.0f;
+  }
+  clock_t now = clock();
+  return fmax(1.0 - ((double)(now - n.release))/CLOCKS_PER_SEC/(1.0), 0.0);
+}
+
+double freq_calc(int n){ // A4 = 49 -> 440Hz
+  return 440.0 * pow(2.0, (n-49)/12.0);
+}
+
+int num_notes;
+Note all_notes[16];
+
+Sound main_sound = { bad_adsr };
+
+
 static char *device = "plughw:01,00";                     /* playback device */
 static snd_pcm_format_t format = SND_PCM_FORMAT_S16;    /* sample format */
 static unsigned int rate = 44100;                       /* stream rate */
@@ -27,18 +59,13 @@ static snd_pcm_sframes_t buffer_size;
 static snd_pcm_sframes_t period_size;
 static snd_output_t *output = NULL;
 
-double freq_calc(int n){ // A4 = 49 -> 440Hz
-  return 440.0 * pow(2.0, (n-49)/12.0);
-}
 
 static void generate_sine(const snd_pcm_channel_area_t *areas, 
     snd_pcm_uframes_t offset,
-    int count, double *_phase)
+    int count)
 {
 
   static double max_phase = 2. * M_PI;
-  double phase = *_phase;
-  double step = max_phase*freq/(double)rate;
   unsigned char *samples[channels];
   int steps[channels];
   unsigned int chn;
@@ -76,10 +103,26 @@ static void generate_sine(const snd_pcm_channel_area_t *areas,
 
     int res, i;
     if (is_float) {
-      fval.f = sin(phase);
-      res = fval.i;
-    } else
-      res = sin(phase) * maxval;
+      //fval.f = sin(phase);
+      //res = fval.i;
+    } else {
+      res = 0;
+
+      double step = max_phase*freq/(double)rate;
+
+      for(int i = 0; i < num_notes; i++){
+        Note n = all_notes[i];
+        float adsr_val = bad_adsr(n);
+        printf("%f\n", adsr_val);
+        res += sin(n.phase) * maxval * adsr_val;
+        n.phase += step;
+        if (n.phase >= max_phase)
+          n.phase -= max_phase;
+      }
+
+      if(num_notes > 0)
+        res /= (double)num_notes;
+    }
 
     if (to_unsigned)
       res ^= 1U << (format_bits - 1);
@@ -95,12 +138,7 @@ static void generate_sine(const snd_pcm_channel_area_t *areas,
       }
       samples[chn] += steps[chn];
     }
-
-    phase += step;
-    if (phase >= max_phase)
-      phase -= max_phase;
   }
-  *_phase = phase;
 }
 static int set_hwparams(snd_pcm_t *handle,
     snd_pcm_hw_params_t *params,
@@ -257,9 +295,7 @@ static int write_loop(snd_pcm_t *handle,
   signed short *ptr;
   int err, cptr;
   while (1) {
-    clock_t gs_start = clock();
-    generate_sine(areas, 0, period_size, &phase);
-    clock_t gs_end = clock();
+    //generate_sine(areas, 0, period_size, &phase);
     //printf("gs: %f\n", (gs_end-gs_start)/CLOCKS_PER_SEC);
 
     ptr = samples;
@@ -337,7 +373,7 @@ static int write_and_poll_loop(snd_pcm_t *handle,
         }
       }
     }
-    generate_sine(areas, 0, period_size, &phase);
+    //generate_sine(areas, 0, period_size, &phase);
     ptr = samples;
     cptr = period_size;
     while (cptr > 0) {
@@ -402,7 +438,7 @@ static void async_callback(snd_async_handler_t *ahandler)
 
   avail = snd_pcm_avail_update(handle);
   while (avail >= period_size) {
-    generate_sine(areas, 0, period_size, &data->phase);
+    generate_sine(areas, 0, period_size);
     err = snd_pcm_writei(handle, samples, period_size);
     if (err < 0) {
       printf("Write error: %s\n", snd_strerror(err));
@@ -432,7 +468,7 @@ static int async_loop(snd_pcm_t *handle,
     exit(EXIT_FAILURE);
   }
   for (count = 0; count < 2; count++) {
-    generate_sine(areas, 0, period_size, &data.phase);
+    generate_sine(areas, 0, period_size);
     err = snd_pcm_writei(handle, samples, period_size);
     if (err < 0) {
       printf("Initial write error: %s\n", snd_strerror(err));
@@ -453,22 +489,26 @@ static int async_loop(snd_pcm_t *handle,
   /* because all other work is done in the signal handler,
      suspend the process */
   while (1) {
-    sleep(1);
-  }
-
-  /*
     char c;
-    while( (c = getch()) != 'x' ){
+    scanf("%c\n",&c);
+    printf("bing %c\n", c);
+    while( c != 'x' ){
       printf("%i\n", c);
 
       if( c >= 'a' && c <= 'g' ){
         int note = 49 + c - 'a';
-        printf("%i\n", note);
-        freq = freq_calc(note);
+        printf("Note: %i\n", note);
+
+        all_notes[num_notes].freq = freq_calc(note);
+        all_notes[num_notes].phase = 0.0f;
+        all_notes[num_notes].attack = clock();
+        all_notes[num_notes].release = -1;
+        num_notes += 1;
       }
+      scanf("%c\n",&c);
     }
     exit(EXIT_SUCCESS);
-    */
+  }
 }
 /*
  *   Transfer method - asynchronous notification + direct write
@@ -533,7 +573,7 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
         }
         first = 1;
       }
-      generate_sine(my_areas, offset, frames, &data->phase);
+      generate_sine(my_areas, offset, frames);
       commitres = snd_pcm_mmap_commit(handle, offset, frames);
       if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
         if ((err = xrun_recovery(handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
@@ -575,7 +615,7 @@ static int async_direct_loop(snd_pcm_t *handle,
           exit(EXIT_FAILURE);
         }
       }
-      generate_sine(my_areas, offset, frames, &data.phase);
+      generate_sine(my_areas, offset, frames);
       commitres = snd_pcm_mmap_commit(handle, offset, frames);
       if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
         if ((err = xrun_recovery(handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
@@ -667,7 +707,7 @@ static int direct_loop(snd_pcm_t *handle,
         }
         first = 1;
       }
-      generate_sine(my_areas, offset, frames, &phase);
+      //generate_sine(my_areas, offset, frames, &phase);
       commitres = snd_pcm_mmap_commit(handle, offset, frames);
       if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
         if ((err = xrun_recovery(handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
@@ -692,7 +732,7 @@ static int direct_write_loop(snd_pcm_t *handle,
   signed short *ptr;
   int err, cptr;
   while (1) {
-    generate_sine(areas, 0, period_size, &phase);
+    //generate_sine(areas, 0, period_size, &phase);
     ptr = samples;
     cptr = period_size;
     while (cptr > 0) {
@@ -766,10 +806,9 @@ static void help(void)
 int main(int argc, char *argv[])
 {
 
+  num_notes = 0;
 
-  //w:
   //initscr();
-
 
   struct option long_option[] =
   {
