@@ -17,35 +17,38 @@ typedef struct {} Macro;
 
 typedef struct {
   float (*adsr)(Note);
-
 } Sound;
 
 typedef struct {
   clock_t attack;
   clock_t release;
-  float freq;
-  float phase;
+  double freq;
+  double phase;
+  bool active;
 } Note;
 
-float bad_adsr(Note n){
-  if(n.release == -1){
-    return 1.0f;
+double bad_adsr(Note *n){
+  if(n->release == -1){
+    return 1.0;
   }
   clock_t now = clock();
-  return fmax(1.0 - ((double)(now - n.release))/CLOCKS_PER_SEC/(1.0), 0.0);
+  double seconds = 0.33;
+  double r = fmin(1.0, fmax(0.0, 1.0 - ((double)(now - n->release))/CLOCKS_PER_SEC/(seconds)));
+  if ( r == 0.0 )
+    n->active = false;
+  return r;
 }
 
 double freq_calc(int n){ // A4 = 49 -> 440Hz
   return 440.0 * pow(2.0, (n-49)/12.0);
 }
 
-int num_notes;
-Note all_notes[16];
+int num_notes = 0;
+Note all_notes[512];
 
 Sound main_sound = { bad_adsr };
 
-
-static char *device = "plughw:01,00";                     /* playback device */
+static char *device = "plughw:00,00";                     /* playback device */
 static snd_pcm_format_t format = SND_PCM_FORMAT_S16;    /* sample format */
 static unsigned int rate = 44100;                       /* stream rate */
 static unsigned int channels = 1;                       /* count of channels */
@@ -59,6 +62,47 @@ static snd_pcm_sframes_t buffer_size;
 static snd_pcm_sframes_t period_size;
 static snd_output_t *output = NULL;
 
+
+void control_loop(){
+  while (1) {
+    char c;
+    scanf("%c\n",&c);
+    printf("bing %c\n", c);
+    while( c != 'x' ){
+      printf("%i\n", c);
+
+      if( c >= 'a' && c <= 'g' ){
+        int note = 49 + c - 'a';
+        printf("Note: %i\n", note);
+
+	all_notes[num_notes].freq = freq_calc(note);
+	all_notes[num_notes].phase = 0.0;
+	all_notes[num_notes].active = true;
+	all_notes[num_notes].attack = clock();
+	all_notes[num_notes].release = clock()+0.08*CLOCKS_PER_SEC;
+	num_notes += 1;
+
+	all_notes[num_notes].freq = freq_calc(note+4);
+	all_notes[num_notes].phase = 0.0;
+	all_notes[num_notes].active = true;
+	all_notes[num_notes].attack = clock();
+	all_notes[num_notes].release = clock()+0.08*CLOCKS_PER_SEC;
+	num_notes += 1;
+
+	all_notes[num_notes].freq = freq_calc(note+7);
+	all_notes[num_notes].phase = 0.0;
+	all_notes[num_notes].active = true;
+	all_notes[num_notes].attack = clock();
+	all_notes[num_notes].release = clock()+0.08*CLOCKS_PER_SEC;
+	num_notes += 1;
+
+      }
+      scanf("%c\n",&c);
+    }
+    exit(EXIT_SUCCESS);
+  }
+
+}
 
 static void generate_sine(const snd_pcm_channel_area_t *areas, 
     snd_pcm_uframes_t offset,
@@ -103,21 +147,28 @@ static void generate_sine(const snd_pcm_channel_area_t *areas,
 
     int res, i;
     if (is_float) {
-      //fval.f = sin(phase);
-      //res = fval.i;
+      fval.f = sin(0);
+      res = fval.i;
+      printf("IS_FLOAT!!\n");
     } else {
       res = 0;
 
-      double step = max_phase*freq/(double)rate;
+      for(int i = 0; i < num_notes; i++){
+	Note* n = &(all_notes[i]);
+        if(! n->active )
+	  continue;
+	double adsr_val = bad_adsr(n);
+	//printf("%d %lf\n", i, adsr_val);
+        res += sin(n->phase) * maxval * adsr_val;
+
+        double step = max_phase*(n->freq)/(double)rate;
+        n->phase += step;
+      }
 
       for(int i = 0; i < num_notes; i++){
-        Note n = all_notes[i];
-        float adsr_val = bad_adsr(n);
-        printf("%f\n", adsr_val);
-        res += sin(n.phase) * maxval * adsr_val;
-        n.phase += step;
-        if (n.phase >= max_phase)
-          n.phase -= max_phase;
+        if (all_notes[i].phase >= max_phase){
+          all_notes[i].phase -= max_phase;
+	}
       }
 
       if(num_notes > 0)
@@ -284,137 +335,8 @@ static int xrun_recovery(snd_pcm_t *handle, int err)
   }
   return err;
 }
-/*
- *   Transfer method - write only
- */
-static int write_loop(snd_pcm_t *handle,
-    signed short *samples,
-    snd_pcm_channel_area_t *areas)
-{
-  double phase = 0;
-  signed short *ptr;
-  int err, cptr;
-  while (1) {
-    //generate_sine(areas, 0, period_size, &phase);
-    //printf("gs: %f\n", (gs_end-gs_start)/CLOCKS_PER_SEC);
 
-    ptr = samples;
-    cptr = period_size;
-    while (cptr > 0) {
-      err = snd_pcm_writei(handle, ptr, cptr);
-      if (err == -EAGAIN)
-        continue;
-      if (err < 0) {
-        if (xrun_recovery(handle, err) < 0) {
-          printf("Write error: %s\n", snd_strerror(err));
-          exit(EXIT_FAILURE);
-        }
-        break;  /* skip one period */
-      }
-      ptr += err * channels;
-      cptr -= err;
-    }
-  }
-}
 
-/*
- *   Transfer method - write and wait for room in buffer using poll
- */
-static int wait_for_poll(snd_pcm_t *handle, struct pollfd *ufds, unsigned int count)
-{
-  unsigned short revents;
-  while (1) {
-    poll(ufds, count, -1);
-    snd_pcm_poll_descriptors_revents(handle, ufds, count, &revents);
-    if (revents & POLLERR)
-      return -EIO;
-    if (revents & POLLOUT)
-      return 0;
-  }
-}
-static int write_and_poll_loop(snd_pcm_t *handle,
-    signed short *samples,
-    snd_pcm_channel_area_t *areas)
-{
-  struct pollfd *ufds;
-  double phase = 0;
-  signed short *ptr;
-  int err, count, cptr, init;
-  count = snd_pcm_poll_descriptors_count (handle);
-  if (count <= 0) {
-    printf("Invalid poll descriptors count\n");
-    return count;
-  }
-  ufds = malloc(sizeof(struct pollfd) * count);
-  if (ufds == NULL) {
-    printf("No enough memory\n");
-    return -ENOMEM;
-  }
-  if ((err = snd_pcm_poll_descriptors(handle, ufds, count)) < 0) {
-    printf("Unable to obtain poll descriptors for playback: %s\n", snd_strerror(err));
-    return err;
-  }
-  init = 1;
-  while (1) {
-    if (!init) {
-      err = wait_for_poll(handle, ufds, count);
-      if (err < 0) {
-        if (snd_pcm_state(handle) == SND_PCM_STATE_XRUN ||
-            snd_pcm_state(handle) == SND_PCM_STATE_SUSPENDED) {
-          err = snd_pcm_state(handle) == SND_PCM_STATE_XRUN ? -EPIPE : -ESTRPIPE;
-          if (xrun_recovery(handle, err) < 0) {
-            printf("Write error: %s\n", snd_strerror(err));
-            exit(EXIT_FAILURE);
-          }
-          init = 1;
-        } else {
-          printf("Wait for poll failed\n");
-          return err;
-        }
-      }
-    }
-    //generate_sine(areas, 0, period_size, &phase);
-    ptr = samples;
-    cptr = period_size;
-    while (cptr > 0) {
-      err = snd_pcm_writei(handle, ptr, cptr);
-      if (err < 0) {
-        if (xrun_recovery(handle, err) < 0) {
-          printf("Write error: %s\n", snd_strerror(err));
-          exit(EXIT_FAILURE);
-        }
-        init = 1;
-        break;  /* skip one period */
-      }
-      if (snd_pcm_state(handle) == SND_PCM_STATE_RUNNING)
-        init = 0;
-      ptr += err * channels;
-      cptr -= err;
-      if (cptr == 0)
-        break;
-      /* it is possible, that the initial buffer cannot store */
-      /* all data from the last period, so wait awhile */
-      err = wait_for_poll(handle, ufds, count);
-      if (err < 0) {
-        if (snd_pcm_state(handle) == SND_PCM_STATE_XRUN ||
-            snd_pcm_state(handle) == SND_PCM_STATE_SUSPENDED) {
-          err = snd_pcm_state(handle) == SND_PCM_STATE_XRUN ? -EPIPE : -ESTRPIPE;
-          if (xrun_recovery(handle, err) < 0) {
-            printf("Write error: %s\n", snd_strerror(err));
-            exit(EXIT_FAILURE);
-          }
-          init = 1;
-        } else {
-          printf("Wait for poll failed\n");
-          return err;
-        }
-      }
-    }
-  }
-}
-/*
- *   Transfer method - asynchronous notification
- */
 struct async_private_data {
   signed short *samples;
   snd_pcm_channel_area_t *areas;
@@ -434,7 +356,6 @@ static void async_callback(snd_async_handler_t *ahandler)
 
   last = now;
   now = clock();
-  //printf("async time diff %f\n", ((double)(now-last))/CLOCKS_PER_SEC);
 
   avail = snd_pcm_avail_update(handle);
   while (avail >= period_size) {
@@ -461,7 +382,6 @@ static int async_loop(snd_pcm_t *handle,
   int err, count;
   data.samples = samples;
   data.areas = areas;
-  data.phase = 0;
   err = snd_async_add_pcm_handler(&ahandler, handle, async_callback, &data);
   if (err < 0) {
     printf("Unable to register async handler\n");
@@ -488,27 +408,9 @@ static int async_loop(snd_pcm_t *handle,
   }
   /* because all other work is done in the signal handler,
      suspend the process */
-  while (1) {
-    char c;
-    scanf("%c\n",&c);
-    printf("bing %c\n", c);
-    while( c != 'x' ){
-      printf("%i\n", c);
 
-      if( c >= 'a' && c <= 'g' ){
-        int note = 49 + c - 'a';
-        printf("Note: %i\n", note);
+  while(1) control_loop();
 
-        all_notes[num_notes].freq = freq_calc(note);
-        all_notes[num_notes].phase = 0.0f;
-        all_notes[num_notes].attack = clock();
-        all_notes[num_notes].release = -1;
-        num_notes += 1;
-      }
-      scanf("%c\n",&c);
-    }
-    exit(EXIT_SUCCESS);
-  }
 }
 /*
  *   Transfer method - asynchronous notification + direct write
@@ -633,123 +535,7 @@ static int async_direct_loop(snd_pcm_t *handle,
   }
   /* because all other work is done in the signal handler,
      suspend the process */
-  while (1) {
-    sleep(1);
-  }
-}
-/*
- *   Transfer method - direct write only
- */
-static int direct_loop(snd_pcm_t *handle,
-    signed short *samples ATTRIBUTE_UNUSED,
-    snd_pcm_channel_area_t *areas ATTRIBUTE_UNUSED)
-{
-  double phase = 0;
-  const snd_pcm_channel_area_t *my_areas;
-  snd_pcm_uframes_t offset, frames, size;
-  snd_pcm_sframes_t avail, commitres;
-  snd_pcm_state_t state;
-  int err, first = 1;
-  while (1) {
-    state = snd_pcm_state(handle);
-    if (state == SND_PCM_STATE_XRUN) {
-      err = xrun_recovery(handle, -EPIPE);
-      if (err < 0) {
-        printf("XRUN recovery failed: %s\n", snd_strerror(err));
-        return err;
-      }
-      first = 1;
-    } else if (state == SND_PCM_STATE_SUSPENDED) {
-      err = xrun_recovery(handle, -ESTRPIPE);
-      if (err < 0) {
-        printf("SUSPEND recovery failed: %s\n", snd_strerror(err));
-        return err;
-      }
-    }
-    avail = snd_pcm_avail_update(handle);
-    if (avail < 0) {
-      err = xrun_recovery(handle, avail);
-      if (err < 0) {
-        printf("avail update failed: %s\n", snd_strerror(err));
-        return err;
-      }
-      first = 1;
-      continue;
-    }
-    if (avail < period_size) {
-      if (first) {
-        first = 0;
-        err = snd_pcm_start(handle);
-        if (err < 0) {
-          printf("Start error: %s\n", snd_strerror(err));
-          exit(EXIT_FAILURE);
-        }
-      } else {
-        err = snd_pcm_wait(handle, -1);
-        if (err < 0) {
-          if ((err = xrun_recovery(handle, err)) < 0) {
-            printf("snd_pcm_wait error: %s\n", snd_strerror(err));
-            exit(EXIT_FAILURE);
-          }
-          first = 1;
-        }
-      }
-      continue;
-    }
-    size = period_size;
-    while (size > 0) {
-      frames = size;
-      err = snd_pcm_mmap_begin(handle, &my_areas, &offset, &frames);
-      if (err < 0) {
-        if ((err = xrun_recovery(handle, err)) < 0) {
-          printf("MMAP begin avail error: %s\n", snd_strerror(err));
-          exit(EXIT_FAILURE);
-        }
-        first = 1;
-      }
-      //generate_sine(my_areas, offset, frames, &phase);
-      commitres = snd_pcm_mmap_commit(handle, offset, frames);
-      if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
-        if ((err = xrun_recovery(handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
-          printf("MMAP commit error: %s\n", snd_strerror(err));
-          exit(EXIT_FAILURE);
-        }
-        first = 1;
-      }
-      size -= frames;
-    }
-  }
-}
-
-/*
- *   Transfer method - direct write only using mmap_write functions
- */
-static int direct_write_loop(snd_pcm_t *handle,
-    signed short *samples,
-    snd_pcm_channel_area_t *areas)
-{
-  double phase = 0;
-  signed short *ptr;
-  int err, cptr;
-  while (1) {
-    //generate_sine(areas, 0, period_size, &phase);
-    ptr = samples;
-    cptr = period_size;
-    while (cptr > 0) {
-      err = snd_pcm_mmap_writei(handle, ptr, cptr);
-      if (err == -EAGAIN)
-        continue;
-      if (err < 0) {
-        if (xrun_recovery(handle, err) < 0) {
-          printf("Write error: %s\n", snd_strerror(err));
-          exit(EXIT_FAILURE);
-        }
-        break;  /* skip one period */
-      }
-      ptr += err * channels;
-      cptr -= err;
-    }
-  }
+  while(1) control_loop();
 }
 
 /*
@@ -763,13 +549,8 @@ struct transfer_method {
       snd_pcm_channel_area_t *areas);
 };
 static struct transfer_method transfer_methods[] = {
-  { "write", SND_PCM_ACCESS_RW_INTERLEAVED, write_loop },
-  { "write_and_poll", SND_PCM_ACCESS_RW_INTERLEAVED, write_and_poll_loop },
   { "async", SND_PCM_ACCESS_RW_INTERLEAVED, async_loop },
   { "async_direct", SND_PCM_ACCESS_MMAP_INTERLEAVED, async_direct_loop },
-  { "direct_interleaved", SND_PCM_ACCESS_MMAP_INTERLEAVED, direct_loop },
-  { "direct_noninterleaved", SND_PCM_ACCESS_MMAP_NONINTERLEAVED, direct_loop },
-  { "direct_write", SND_PCM_ACCESS_MMAP_INTERLEAVED, direct_write_loop },
   { NULL, SND_PCM_ACCESS_RW_INTERLEAVED, NULL }
 };
 static void help(void)
@@ -805,8 +586,6 @@ static void help(void)
 
 int main(int argc, char *argv[])
 {
-
-  num_notes = 0;
 
   //initscr();
 
