@@ -13,6 +13,8 @@
 
 #include <ncurses.h>
 
+
+
 typedef struct {} Macro;
 
 typedef struct {
@@ -23,15 +25,16 @@ typedef struct {
   clock_t attack;
   clock_t release;
   double freq;
+	double step;
   double phase;
   bool active;
 } Note;
 
-double bad_adsr(Note *n){
+
+double bad_adsr(Note *n, clock_t now){
   if(n->release == -1){
     return 1.0;
   }
-  clock_t now = clock();
   double seconds = 0.33;
   double r = fmin(1.0, fmax(0.0, 1.0 - ((double)(now - n->release))/CLOCKS_PER_SEC/(seconds)));
   if ( r == 0.0 )
@@ -43,8 +46,7 @@ double freq_calc(int n){ // A4 = 49 -> 440Hz
   return 440.0 * pow(2.0, (n-49)/12.0);
 }
 
-int num_notes = 0;
-Note all_notes[512];
+Note all_notes[104];
 
 Sound main_sound = { bad_adsr };
 
@@ -62,54 +64,63 @@ static snd_pcm_sframes_t buffer_size;
 static snd_pcm_sframes_t period_size;
 static snd_output_t *output = NULL;
 
+static double max_phase = 2. * M_PI;
 
 void control_loop(){
+
+  for(int i = 0; i < 104; i++){
+    all_notes[i].active = false;
+		double freq = freq_calc(i);
+		all_notes[i].freq = freq;
+		all_notes[i].step = max_phase*(freq)/(double)rate;
+	}
+
   while (1) {
     char c;
     scanf("%c\n",&c);
     printf("bing %c\n", c);
     while( c != 'x' ){
       printf("%i\n", c);
+      scanf("%c\n", &c);
 
       if( c >= 'a' && c <= 'g' ){
         int note = 49 + c - 'a';
+				int used = 0;
+				for(int i = 40; i < 49+13; i++){
+								if(all_notes[i].active)
+												used += 1;
+				}
+				printf("used: %d\n", used);
         printf("Note: %i\n", note);
 
-	all_notes[num_notes].freq = freq_calc(note);
-	all_notes[num_notes].phase = 0.0;
-	all_notes[num_notes].active = true;
-	all_notes[num_notes].attack = clock();
-	all_notes[num_notes].release = clock()+0.08*CLOCKS_PER_SEC;
-	num_notes += 1;
+				all_notes[note].phase = 0.0;
+				all_notes[note].active = true;
+				all_notes[note].attack = clock();
+				all_notes[note].release = clock()+0.08*CLOCKS_PER_SEC;
 
-	all_notes[num_notes].freq = freq_calc(note+4);
-	all_notes[num_notes].phase = 0.0;
-	all_notes[num_notes].active = true;
-	all_notes[num_notes].attack = clock();
-	all_notes[num_notes].release = clock()+0.08*CLOCKS_PER_SEC;
-	num_notes += 1;
+				all_notes[note+5].phase = 0.0;
+				all_notes[note+5].active = true;
+				all_notes[note+5].attack = clock();
+				all_notes[note+5].release = clock()+0.08*CLOCKS_PER_SEC;
 
-	all_notes[num_notes].freq = freq_calc(note+7);
-	all_notes[num_notes].phase = 0.0;
-	all_notes[num_notes].active = true;
-	all_notes[num_notes].attack = clock();
-	all_notes[num_notes].release = clock()+0.08*CLOCKS_PER_SEC;
-	num_notes += 1;
+				all_notes[note+7].phase = 0.0;
+				all_notes[note+7].active = true;
+				all_notes[note+7].attack = clock();
+				all_notes[note+7].release = clock()+0.08*CLOCKS_PER_SEC;
+
 
       }
-      scanf("%c\n",&c);
     }
     exit(EXIT_SUCCESS);
   }
 
 }
 
-static void generate_sine(const snd_pcm_channel_area_t *areas, 
+static void combine_sounds(const snd_pcm_channel_area_t *areas, 
     snd_pcm_uframes_t offset,
     int count)
 {
 
-  static double max_phase = 2. * M_PI;
   unsigned char *samples[channels];
   int steps[channels];
   unsigned int chn;
@@ -121,6 +132,13 @@ static void generate_sine(const snd_pcm_channel_area_t *areas,
   int to_unsigned = snd_pcm_format_unsigned(format) == 1;
   int is_float = (format == SND_PCM_FORMAT_FLOAT_LE ||
       format == SND_PCM_FORMAT_FLOAT_BE);
+
+  double whatwave(double x){
+    if(x > M_PI)
+						return 1.0;
+		else
+						return -1.0;
+  }
 
   /* verify and prepare the contents of areas */
   for (chn = 0; chn < channels; chn++) {
@@ -153,26 +171,21 @@ static void generate_sine(const snd_pcm_channel_area_t *areas,
     } else {
       res = 0;
 
-      for(int i = 0; i < num_notes; i++){
-	Note* n = &(all_notes[i]);
-        if(! n->active )
-	  continue;
-	double adsr_val = bad_adsr(n);
-	//printf("%d %lf\n", i, adsr_val);
-        res += sin(n->phase) * maxval * adsr_val;
+			clock_t clock_now = clock();
+			for(int i = 49-13; i < 49+26; i++){
+				Note* n = &(all_notes[i]);
+				if(! n->active )
+					continue;
+				double adsr_val = bad_adsr(n, clock_now);
+				res += whatwave(n->phase) * maxval * adsr_val;
 
-        double step = max_phase*(n->freq)/(double)rate;
-        n->phase += step;
+        n->phase += n->step;
+        if (n->phase >= max_phase){
+          n->phase -= max_phase;
+				}
       }
 
-      for(int i = 0; i < num_notes; i++){
-        if (all_notes[i].phase >= max_phase){
-          all_notes[i].phase -= max_phase;
-	}
-      }
-
-      if(num_notes > 0)
-        res /= (double)num_notes;
+			res /= 20.0;
     }
 
     if (to_unsigned)
@@ -359,7 +372,7 @@ static void async_callback(snd_async_handler_t *ahandler)
 
   avail = snd_pcm_avail_update(handle);
   while (avail >= period_size) {
-    generate_sine(areas, 0, period_size);
+    combine_sounds(areas, 0, period_size);
     err = snd_pcm_writei(handle, samples, period_size);
     if (err < 0) {
       printf("Write error: %s\n", snd_strerror(err));
@@ -388,7 +401,7 @@ static int async_loop(snd_pcm_t *handle,
     exit(EXIT_FAILURE);
   }
   for (count = 0; count < 2; count++) {
-    generate_sine(areas, 0, period_size);
+    combine_sounds(areas, 0, period_size);
     err = snd_pcm_writei(handle, samples, period_size);
     if (err < 0) {
       printf("Initial write error: %s\n", snd_strerror(err));
@@ -475,7 +488,7 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
         }
         first = 1;
       }
-      generate_sine(my_areas, offset, frames);
+      combine_sounds(my_areas, offset, frames);
       commitres = snd_pcm_mmap_commit(handle, offset, frames);
       if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
         if ((err = xrun_recovery(handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
@@ -517,7 +530,7 @@ static int async_direct_loop(snd_pcm_t *handle,
           exit(EXIT_FAILURE);
         }
       }
-      generate_sine(my_areas, offset, frames);
+      combine_sounds(my_areas, offset, frames);
       commitres = snd_pcm_mmap_commit(handle, offset, frames);
       if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
         if ((err = xrun_recovery(handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
