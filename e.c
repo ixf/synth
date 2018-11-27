@@ -3,6 +3,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+
 #include <string.h>
 #include <sched.h>
 #include <errno.h>
@@ -13,7 +14,46 @@
 
 #include <ncurses.h>
 
-static char *device = "plughw:01,00";                     /* playback device */
+
+#include <pigpio.h>
+volatile int rotary_state;
+volatile double* rotary_value;
+
+int last_gpio = 18;
+int last_a = 0;
+int last_b = 0;
+
+char state = 0x00;
+
+void callback(int GPIO, int level, unsigned int tick){
+  printf("%d %d %d\n", rotary_state, GPIO, level);
+  state <<= 2;
+  if(level)
+    if(GPIO == 18)
+      state |= 2;
+    else
+      state |= 1;
+  state &= 0xF;
+  // 0001
+  // 0111
+  // 1110
+  // 1000
+
+  // 0100
+  // 1101
+  // 1011
+  // 0010
+  if(state == 1 || state == 7 || state == 14 || state == 8)
+    rotary_state += 1;
+  else if(state == 4 || state == 13 || state == 2 || state == 11)
+    rotary_state -= 1;
+  rotary_value = rotary_state/256.0;
+}
+
+
+
+
+static char *device = "plughw:0,0";                     /* playback device */
 static snd_pcm_format_t format = SND_PCM_FORMAT_S16;    /* sample format */
 static unsigned int rate = 44100;                       /* stream rate */
 static unsigned int channels = 1;                       /* count of channels */
@@ -769,6 +809,23 @@ int main(int argc, char *argv[])
 
   //w:
   //initscr();
+  
+  if (gpioInitialise()<0){
+    printf("init failed\n");
+    return 1;
+  }
+
+  int pa = 18;
+  int pb = 23;
+
+  gpioSetMode(pa, PI_INPUT);
+  gpioSetMode(pb, PI_INPUT);
+
+  gpioSetPullUpDown(pa, PI_PUD_UP);
+  gpioSetPullUpDown(pb, PI_PUD_UP);
+
+  gpioSetAlertFunc(pa, callback);
+  gpioSetAlertFunc(pb, callback);
 
 
   struct option long_option[] =
@@ -919,6 +976,11 @@ int main(int argc, char *argv[])
   free(areas);
   free(samples);
   snd_pcm_close(handle);
+
+	gpioSetAlertFunc(pa, 0);
+	gpioSetAlertFunc(pb, 0);
+
+	gpioTerminate();
 
   //endwin();
   return 0;

@@ -1,7 +1,7 @@
 
 
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <pigpio.h>
 
 volatile int value = 0;
