@@ -1,54 +1,20 @@
 /*
  *  This small demo sends a simple sinusoidal wave to your speakers.
  */
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <pigpio.h>
+
 #include <string.h>
 #include <sched.h>
 #include <errno.h>
+#include <unistd.h>
 #include <getopt.h>
 #include <alsa/asoundlib.h>
 #include <sys/time.h>
 #include <math.h>
 
 #include <ncurses.h>
-
-volatile int rotary_state;
-volatile double* rotary_value;
-
-int last_gpio = 18;
-int last_a = 0;
-int last_b = 0;
-
-char state = 0x00;
-
-void callback(int GPIO, int level, unsigned int tick){
-  printf("%d %d %d\n", rotary_state, GPIO, level);
-  state <<= 2;
-  if(level)
-    if(GPIO == 18)
-      state |= 2;
-    else
-      state |= 1;
-  state &= 0xF;
-  // 0001
-  // 0111
-  // 1110
-  // 1000
-
-  // 0100
-  // 1101
-  // 1011
-  // 0010
-  if(state == 1 || state == 7 || state == 14 || state == 8)
-    rotary_state += 1;
-  else if(state == 4 || state == 13 || state == 2 || state == 11)
-    rotary_state -= 1;
-  rotary_value = rotary_state/256.0;
-}
-
-
 
 
 typedef struct {} Macro;
@@ -450,6 +416,7 @@ static int async_loop(snd_pcm_t *handle,
 			exit(EXIT_FAILURE);
 		}
 	}
+
 	/* because all other work is done in the signal handler,
 		 suspend the process */
 
@@ -631,9 +598,9 @@ static void help(void)
 int main(int argc, char *argv[])
 {
 
-<<<<<<< HEAD
+  //execle("./rotary", "./rotary");
+  //perror("wtf:");
 
-  //w:
   initscr();
 
   init_piano_keys(52, "Q@W#ER%T^Y&UI(O)P");
@@ -641,24 +608,6 @@ int main(int argc, char *argv[])
 
   init_piano_keys(40, "q2w3er5t6y7ui9o0p");
   init_piano_keys(28, "zsxdcvgbhnjm,l.;/");
-  
-  if (gpioInitialise()<0){
-    printf("init failed\n");
-    return 1;
-  }
-
-  int pa = 18;
-  int pb = 23;
-
-  gpioSetMode(pa, PI_INPUT);
-  gpioSetMode(pb, PI_INPUT);
-
-  gpioSetPullUpDown(pa, PI_PUD_UP);
-  gpioSetPullUpDown(pb, PI_PUD_UP);
-
-  gpioSetAlertFunc(pa, callback);
-  gpioSetAlertFunc(pb, callback);
-
 
   struct option long_option[] =
   {
@@ -802,17 +751,14 @@ int main(int argc, char *argv[])
     areas[chn].first = chn * snd_pcm_format_physical_width(format);
     areas[chn].step = channels * snd_pcm_format_physical_width(format);
   }
+
   err = transfer_methods[method].transfer_loop(handle, samples, areas);
+
   if (err < 0)
     printf("Transfer failed: %s\n", snd_strerror(err));
   free(areas);
   free(samples);
   snd_pcm_close(handle);
-
-	gpioSetAlertFunc(pa, 0);
-	gpioSetAlertFunc(pb, 0);
-
-	gpioTerminate();
 
   endwin();
   return 0;
