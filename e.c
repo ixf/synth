@@ -16,6 +16,19 @@
 
 #include <ncurses.h>
 
+volatile double CUTOFF = 300.0;
+
+double r,c,a1,a2,a3,b1,b2;
+
+void calc_filter_parameters(){
+  r = 0.2; //1.41;
+  c = 1.0 / tan(M_PI * CUTOFF / 44100);
+  a1 = 1.0 / ( 1.0 + r*c + c*c);
+  a2 = 2*a1;
+  a3 = a1;
+  b1 = 2.0 * ( 1.0 - c*c) * a1;
+  b2 = ( 1.0 - r*c + c*c) * a1;
+}
 
 typedef struct {} Macro;
 
@@ -29,6 +42,10 @@ typedef struct {
 	double freq;
 	double step;
 	double phase;
+
+	double last_clear[3];
+	double last_final[3];
+
 	bool active;
 } Note;
 
@@ -37,7 +54,7 @@ double bad_adsr(Note *n, clock_t now){
 	if(n->release == -1){
 		return 1.0;
 	}
-	double seconds = 0.08;
+	double seconds = 0.8;
 	double r = fmin(1.0, fmax(0.0, 1.0 - ((double)(now - n->release))/CLOCKS_PER_SEC/(seconds)));
 	if ( r == 0.0 )
 		n->active = false;
@@ -94,6 +111,15 @@ void control_loop(){
 	while( c != 27 ){ // escape
 		c = getch();
 		printf("%i\n", c);
+		if( c == '-' ){
+			CUTOFF -= 20;
+			calc_filter_parameters();
+			continue;
+		} else if (c == '+'){
+			CUTOFF += 20;
+			calc_filter_parameters();
+			continue;
+		}
 
 		int note = piano_keys[c];
 		int used = 0;
@@ -171,18 +197,40 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 			clock_t clock_now = clock();
 			for(int i = 28; i <= 68; i++){
 				Note* n = &(all_notes[i]);
+
 				if(! n->active )
 					continue;
+
+				for(int i = 1; i < 3; i++){
+					n->last_clear[i] = n->last_clear[i-1];
+					n->last_final[i] = n->last_final[i-1];
+				}
+
 				double adsr_val = bad_adsr(n, clock_now);
-				res += sinf(n->phase) * maxval * adsr_val;
+
+				double harmonics_total = 0.0;
+				int harmonics_num = 8;
+				for(int i = 1; i <= harmonics_num; i++)
+					harmonics_total += sinf(n->phase * i);
+
+				n->last_clear[0] = harmonics_total / harmonics_num * adsr_val * maxval;
+
+				n->last_final[0] = 
+					a1 * n->last_clear[0]
+					+ a2 * n->last_clear[1]
+					+ a3 * n->last_clear[2]
+					- b1 * n->last_final[1]
+					- b2 * n->last_final[2];
 
 				n->phase += n->step;
-				if (n->phase >= max_phase){
-					n->phase -= max_phase;
+				if (n->phase >= max_phase*harmonics_num){
+					n->phase -= max_phase*harmonics_num;
 				}
+
+				res += n->last_final[0];
 			}
 
-			res /= 20.0;
+			//res /= 10.0;
 		}
 
 		if (to_unsigned)
@@ -597,6 +645,11 @@ static void help(void)
 
 int main(int argc, char *argv[])
 {
+
+
+
+  calc_filter_parameters();
+
 
   //execle("./rotary", "./rotary");
   //perror("wtf:");
