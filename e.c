@@ -5,28 +5,73 @@
 #include <stdio.h>
 #include <pigpio.h>
 
+#include <sys/time.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/prctl.h>
+
 #include <string.h>
+#include <signal.h>
 #include <sched.h>
 #include <errno.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <alsa/asoundlib.h>
-#include <sys/time.h>
 #include <math.h>
 
 #include <ncurses.h>
+
+// dzielone
+static int *rot_state;
+
+FILE* logfile;
+
+// dla forka:
+
+int last_gpio = 18;
+int last_a = 0;
+int last_b = 0;
+
+char state = 0x00;
+
+void rot_callback(int GPIO, int level, unsigned int tick){
+	printf("%d %d %d\n", *rot_state, GPIO, level);
+	state <<= 2;
+	if(level)
+		if(GPIO == 18)
+			state |= 2;
+		else
+			state |= 1;
+	state &= 0xF;
+	// 0001
+	// 0111
+	// 1110
+	// 1000
+
+	// 0100
+	// 1101
+	// 1011
+	// 0010
+	if(state == 1 || state == 7 || state == 14 || state == 8)
+		*rot_state += 1;
+	else if(state == 4 || state == 13 || state == 2 || state == 11)
+		*rot_state -= 1;
+}
+
+
 
 volatile double CUTOFF = 300.0;
 
 double r,c,a1,a2,a3,b1,b2;
 
 void calc_filter_parameters(){
-  r = 0.2; //1.41;
-  c = 1.0 / tan(M_PI * CUTOFF / 44100);
+  r = *rot_state/1.0;
+  c = tan(M_PI * CUTOFF / 44100);
   a1 = 1.0 / ( 1.0 + r*c + c*c);
-  a2 = 2*a1;
+  a2 = -2*a1;
   a3 = a1;
-  b1 = 2.0 * ( 1.0 - c*c) * a1;
+  b1 = 2.0 * ( c*c - 1.0 ) * a1;
   b2 = ( 1.0 - r*c + c*c) * a1;
 }
 
@@ -112,14 +157,15 @@ void control_loop(){
 		c = getch();
 		printf("%i\n", c);
 		if( c == '-' ){
-			CUTOFF -= 20;
-			calc_filter_parameters();
-			continue;
-		} else if (c == '+'){
-			CUTOFF += 20;
-			calc_filter_parameters();
+			CUTOFF -= 50;
+      printf("cutoff: %lf\n", CUTOFF);
+      continue;
+    } else if (c == '+'){
+      CUTOFF += 50;
+      printf("cutoff: %lf\n", CUTOFF);
 			continue;
 		}
+
 
 		int note = piano_keys[c];
 		int used = 0;
@@ -178,6 +224,10 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 		samples[chn] += offset * steps[chn];
 	}
 
+
+  calc_filter_parameters();
+  fprintf(logfile,"%d %lf %lf : %lf %lf %lf %lf %lf\n", *rot_state, r, c, a1, a2, a3, b1, b2);
+
 	/* fill the channel areas */
 	while (count-- > 0) {
 
@@ -212,7 +262,7 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 				int harmonics_num = 8;
 				for(int i = 1; i <= harmonics_num; i++)
 					harmonics_total += sinf(n->phase * i);
-
+        
 				n->last_clear[0] = harmonics_total / harmonics_num * adsr_val * maxval;
 
 				n->last_final[0] = 
@@ -230,7 +280,7 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 				res += n->last_final[0];
 			}
 
-			//res /= 10.0;
+			res /= 10.0;
 		}
 
 		if (to_unsigned)
@@ -646,6 +696,41 @@ static void help(void)
 int main(int argc, char *argv[])
 {
 
+  logfile = fopen("logs", "w");
+
+  rot_state = mmap(NULL, sizeof *rot_state, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+  *rot_state = 20;
+
+  int child;
+
+  if((child = fork()) == 0){
+    prctl(PR_SET_PDEATHSIG, SIGHUP);
+    if (gpioInitialise()<0){
+	    printf("init failed\n");
+      return 1;
+    }
+
+    int pa = 18;
+    int pb = 23;
+
+    gpioSetMode(pa, PI_INPUT);
+    gpioSetMode(pb, PI_INPUT);
+
+    gpioSetPullUpDown(pa, PI_PUD_UP);
+    gpioSetPullUpDown(pb, PI_PUD_UP);
+  
+    gpioSetAlertFunc(pa, rot_callback);
+    gpioSetAlertFunc(pb, rot_callback);
+
+    while(*rot_state < 10000){sleep(10);}
+
+    gpioSetAlertFunc(pa, 0);
+    gpioSetAlertFunc(pb, 0);
+
+    gpioTerminate();
+    exit(EXIT_SUCCESS);
+  }
 
 
   calc_filter_parameters();
@@ -812,6 +897,10 @@ int main(int argc, char *argv[])
   free(areas);
   free(samples);
   snd_pcm_close(handle);
+
+  kill(child, 9);
+  wait(NULL);
+  munmap(rot_state, sizeof *rot_state);
 
   endwin();
   return 0;
