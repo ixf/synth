@@ -3,7 +3,7 @@
  */
 #include <stdlib.h>
 #include <stdio.h>
-#include <pigpio.h>
+//#include <pigpio.h>
 
 #include <sys/time.h>
 #include <sys/mman.h>
@@ -113,13 +113,13 @@ double freq_calc(int n){ // A4 = 49 -> 440Hz
 Note all_notes[104];
 
 char piano_keys[255] = { 0 };
-void init_piano_keys(int starting, char* keys){
+void init_piano_keys(int starting, int* keys, int count){
 	// przyklad: 40, "awsed"
 	// piano_keys['a'] = 40
 	// piano_keys['w'] = 41
 	// ...
 
-	for(int i = 0; keys[i] != 0; i++){
+	for(int i = 0; i < count; i++){
 		piano_keys[keys[i]] = starting+i;
 	}
 
@@ -165,7 +165,6 @@ void control_loop(){
       printf("cutoff: %lf\n", CUTOFF);
 			continue;
 		}
-
 
 		int note = piano_keys[c];
 		int used = 0;
@@ -702,52 +701,48 @@ int main(int argc, char *argv[])
 
   *rot_state = 20;
 
-  int child;
+/*   int child; */
 
-  if((child = fork()) == 0){
-    prctl(PR_SET_PDEATHSIG, SIGHUP);
-    if (gpioInitialise()<0){
-	    printf("init failed\n");
-      return 1;
-    }
+/*   if((child = fork()) == 0){ */
+/*     prctl(PR_SET_PDEATHSIG, SIGHUP); */
+/*     if (gpioInitialise()<0){ */
+/* 	    printf("init failed\n"); */
+/*       return 1; */
+/*     } */
 
-    int pa = 18;
-    int pb = 23;
+/*     int pa = 18; */
+/*     int pb = 23; */
 
-    gpioSetMode(pa, PI_INPUT);
-    gpioSetMode(pb, PI_INPUT);
+/*     gpioSetMode(pa, PI_INPUT); */
+/*     gpioSetMode(pb, PI_INPUT); */
 
-    gpioSetPullUpDown(pa, PI_PUD_UP);
-    gpioSetPullUpDown(pb, PI_PUD_UP);
+/*     gpioSetPullUpDown(pa, PI_PUD_UP); */
+/*     gpioSetPullUpDown(pb, PI_PUD_UP); */
   
-    gpioSetAlertFunc(pa, rot_callback);
-    gpioSetAlertFunc(pb, rot_callback);
+/*     gpioSetAlertFunc(pa, rot_callback); */
+/*     gpioSetAlertFunc(pb, rot_callback); */
 
-    while(*rot_state < 10000){sleep(10);}
+/*     while(*rot_state < 10000){sleep(10);} */
 
-    gpioSetAlertFunc(pa, 0);
-    gpioSetAlertFunc(pb, 0);
+/*     gpioSetAlertFunc(pa, 0); */
+/*     gpioSetAlertFunc(pb, 0); */
 
-    gpioTerminate();
-    exit(EXIT_SUCCESS);
-  }
+/*     gpioTerminate(); */
+/*     exit(EXIT_SUCCESS); */
+/*   } */
 
 
   calc_filter_parameters();
 
 
-  //execle("./rotary", "./rotary");
-  //perror("wtf:");
-
   initscr();
 
-  init_piano_keys(52, "Q@W#ER%T^Y&UI(O)P");
-  init_piano_keys(40, "ZSXDCVGBHNJM<l>:?");
+  int top_row[] = { 16, 3,  17,  4, 18, 19,  6, 20,  7, 21,  8, 22 };
+  int bot_row[] = { 44, 31, 45, 32, 46, 47, 34, 48, 35, 49, 36, 50 };
+  init_piano_keys(52, top_row, sizeof(top_row)/sizeof(top_row[0]));
+  init_piano_keys(40, bot_row, sizeof(bot_row)/sizeof(bot_row[0]));
 
-  init_piano_keys(40, "q2w3er5t6y7ui9o0p");
-  init_piano_keys(28, "zsxdcvgbhnjm,l.;/");
-
-  struct option long_option[] =
+    struct option long_option[] =
   {
     {"help", 0, NULL, 'h'},
     {"device", 1, NULL, 'D'},
@@ -898,7 +893,7 @@ int main(int argc, char *argv[])
   free(samples);
   snd_pcm_close(handle);
 
-  kill(child, 9);
+  //kill(child, 9);
   wait(NULL);
   munmap(rot_state, sizeof *rot_state);
 
