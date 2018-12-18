@@ -22,6 +22,16 @@
 
 #include <ncurses.h>
 
+#include <fcntl.h>
+#include <dirent.h>
+#include <linux/input.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <termios.h>
+ 
+
 // dzielone
 static int *rot_state;
 
@@ -152,35 +162,59 @@ void control_loop(){
 		all_notes[i].step = max_phase*(freq)/(double)rate;
 	}
 
-	char c;
-	while( c != 27 ){ // escape
-		c = getch();
-		printf("%i\n", c);
-		if( c == '-' ){
-			CUTOFF -= 50;
-      printf("cutoff: %lf\n", CUTOFF);
-      continue;
-    } else if (c == '+'){
-      CUTOFF += 50;
-      printf("cutoff: %lf\n", CUTOFF);
-			continue;
+	struct input_event ev[64];
+  	int fd, rd, value, code, size = sizeof (struct input_event);
+  	char name[256] = "Unknown";
+  	char *device = NULL;
+
+  	if ((getuid ()) != 0)
+    	printf ("You are not root! This may not work...n/");
+
+ 	device = "/dev/input/event3";
+  	//Open Device
+  	if ((fd = open (device, O_RDONLY)) == -1)
+    	printf ("%s is not a vaild device.n", device);
+	ioctl (fd, EVIOCGNAME (sizeof (name)), name);
+	printf ("IO: Reading From : %s (%s)\n", device, name);
+  	fflush(stdout); 
+
+
+	while (1){
+		if ((rd = read (fd, ev, size * 64)) < size)
+			perror("Error reading");  
+		value = ev[1].value;
+		code = ev[1].code;
+		if (ev[1].value !=2 && ev[1].type == 1){
+			//got char
+			printf ("Code[%d] %d \n", (ev[1].code), (ev[1].value));
+			fflush(stdout);
+			printf ("Code = %d \n",code);
+
+			if( code == 12 ){
+				CUTOFF -= 50;
+      			printf("cutoff: %lf\n", CUTOFF);
+	  			fflush(stdout);
+      			continue;
+    		} else if (code == 13){
+      			CUTOFF += 50;
+      			printf("cutoff: %lf\n", CUTOFF);
+				fflush(stdout);
+				continue;
+			}
+		
+			int note = piano_keys[code];
+			if(value == 1){
+				//PRESS
+				all_notes[note].phase = 0.0;
+				all_notes[note].active = true;
+				all_notes[note].attack = clock();
+				all_notes[note].release = -1;
+			}else{
+				//RELEASE
+				all_notes[note].release = clock();
+			}
 		}
-
-		int note = piano_keys[c];
-		int used = 0;
-		for(int i = 28; i <= 68; i++){
-			if(all_notes[i].active)
-				used += 1;
-		}
-		printf("used: %d\n", used);
-		printf("Note: %i\n", note);
-
-		all_notes[note].phase = 0.0;
-		all_notes[note].active = true;
-		all_notes[note].attack = clock();
-		all_notes[note].release = clock()+0.05*CLOCKS_PER_SEC;
-
-	}
+  	}  
 	exit(EXIT_SUCCESS);
 }
 

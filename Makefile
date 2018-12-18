@@ -1,4 +1,4 @@
-FLAGI=-lasound -lm -lncurses -I./PIGPIO/ -L./PIGPIO/ -l:libpigpio.so
+FLAGI=-lasound -lm -lncurses
 
 all: e.c
 	gcc e.c -o e $(FLAGI)
