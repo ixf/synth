@@ -67,7 +67,7 @@ double sin_wave(double x){
 }
 
 double step3_wave(double x){
-  return ceil(3*x/(2*M_PI)-2;
+  return ceil(3*x/(2*M_PI))-2;
 }
 
 double step8_wave(double x){
@@ -79,7 +79,7 @@ double triangle_wave(double x){
     return x*2/M_PI;
   else if( x < 1.5 * M_PI )
     return (M_PI-x)*2/M_PI;
-  else 
+  else
     return x*2/M_PI-4.0;
 }
 
@@ -252,7 +252,7 @@ void control_loop(){
   exit(EXIT_SUCCESS);
 }
 
-static void combine_sounds(const snd_pcm_channel_area_t *areas, 
+static void combine_sounds(const snd_pcm_channel_area_t *areas,
 		snd_pcm_uframes_t offset,
 		int count)
 {
@@ -323,7 +323,7 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 
 	n->last_clear[0] = clear_total * adsr_val * maxval;
 
-	n->last_final[0] = 
+	n->last_final[0] =
 	  a1 * n->last_clear[0];
 	  /* a1 * n->last_clear[0] */
 	  /* + a2 * n->last_clear[1] */
@@ -779,7 +779,7 @@ int main(int argc, char *argv[])
 
     gpioSetPullUpDown(pa, PI_PUD_UP);
     gpioSetPullUpDown(pb, PI_PUD_UP);
-  
+
     gpioSetAlertFunc(pa, rot_callback);
     gpioSetAlertFunc(pb, rot_callback);
 
