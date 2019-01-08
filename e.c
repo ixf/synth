@@ -3,7 +3,7 @@
  */
 #include <stdlib.h>
 #include <stdio.h>
-#include <pigpio.h>
+//#include <pigpio.h>
 
 #include <sys/time.h>
 #include <sys/mman.h>
@@ -35,8 +35,19 @@ int last_b = 0;
 
 char state = 0x00;
 
+
+// 0001
+// 0111
+// 1110
+// 1000
+
+// 0100
+// 1101
+// 1011
+// 0010
+
 void rot_callback(int GPIO, int level, unsigned int tick){
-	printf("%d %d %d\n", *rot_state, GPIO, level);
+	//printf("%d %d %d\n", *rot_state, GPIO, level);
 	state <<= 2;
 	if(level)
 		if(GPIO == 18)
@@ -44,20 +55,53 @@ void rot_callback(int GPIO, int level, unsigned int tick){
 		else
 			state |= 1;
 	state &= 0xF;
-	// 0001
-	// 0111
-	// 1110
-	// 1000
 
-	// 0100
-	// 1101
-	// 1011
-	// 0010
 	if(state == 1 || state == 7 || state == 14 || state == 8)
 		*rot_state += 1;
 	else if(state == 4 || state == 13 || state == 2 || state == 11)
 		*rot_state -= 1;
 }
+
+double sin_wave(double x){
+  return sinf(x);
+}
+
+double step3_wave(double x){
+  return ceil(3*x/(2*M_PI)-2;
+}
+
+double step8_wave(double x){
+  return ceil(8*x/(2*M_PI) - 4.5)/3.5;
+}
+
+double triangle_wave(double x){
+  if( x < 0.5 * M_PI )
+    return x*2/M_PI;
+  else if( x < 1.5 * M_PI )
+    return (M_PI-x)*2/M_PI;
+  else 
+    return x*2/M_PI-4.0;
+}
+
+double sawup_wave(double x){
+  return 1.0 - x/M_PI;
+}
+
+double sawdown_wave(double x){
+  return x/M_PI - 1.0;
+}
+
+double square_wave(double x){
+  if(x > M_PI)
+    return 1.0;
+  else
+    return -1.0;
+}
+
+typedef double (*wave_ptr)(double x);
+double weight[2] = { 0.5, 0.5 };
+wave_ptr osc_wave1 = sin_wave;
+wave_ptr osc_wave2 = sawup_wave;
 
 
 
@@ -66,7 +110,9 @@ volatile double CUTOFF = 300.0;
 double r,c,a1,a2,a3,b1,b2;
 
 void calc_filter_parameters(){
-  r = *rot_state/1.0;
+
+  // hipass
+  r = *rot_state/100.0;
   c = tan(M_PI * CUTOFF / 44100);
   a1 = 1.0 / ( 1.0 + r*c + c*c);
   a2 = -2*a1;
@@ -99,7 +145,7 @@ double bad_adsr(Note *n, clock_t now){
 	if(n->release == -1){
 		return 1.0;
 	}
-	double seconds = 0.8;
+	double seconds = 0.2;
 	double r = fmin(1.0, fmax(0.0, 1.0 - ((double)(now - n->release))/CLOCKS_PER_SEC/(seconds)));
 	if ( r == 0.0 )
 		n->active = false;
@@ -145,44 +191,65 @@ static double max_phase = 2. * M_PI;
 
 void control_loop(){
 
-	for(int i = 0; i < 104; i++){
-		all_notes[i].active = false;
-		double freq = freq_calc(i);
-		all_notes[i].freq = freq;
-		all_notes[i].step = max_phase*(freq)/(double)rate;
-	}
+  for(int i = 0; i < 104; i++){
+    all_notes[i].active = false;
+    double freq = freq_calc(i);
+    all_notes[i].freq = freq;
+    all_notes[i].step = max_phase*(freq)/(double)rate;
+  }
 
-	char c;
-	while( c != 27 ){ // escape
-		c = getch();
-		printf("%i\n", c);
-		if( c == '-' ){
-			CUTOFF -= 50;
-      printf("cutoff: %lf\n", CUTOFF);
+  char c;
+  while( c != 27 ){ // escape
+    c = getch();
+    //printf("%i\n", c);
+    if( c == '-' ){
+      *rot_state -= 1;
+      //printf("rot_state: %d\n", *rot_state);
+
+      /* CUTOFF -= 50; */
+      /* printf("cutoff: %lf\n", CUTOFF); */
       continue;
     } else if (c == '+'){
+      *rot_state += 1;
+      //printf("rot_state: %d\n", *rot_state);
+      /* CUTOFF += 50; */
+      /* printf("cutoff: %lf\n", CUTOFF); */
+      continue;
+    } else if( c == '1' ){
+      CUTOFF -= 50;
+      //printf("cutoff: %lf\n", CUTOFF);
+      continue;
+    } else if (c == '2'){
       CUTOFF += 50;
-      printf("cutoff: %lf\n", CUTOFF);
-			continue;
-		}
+      //printf("cutoff: %lf\n", CUTOFF);
+      continue;
+    } else if (c == '3'){
+      weight[0] += 0.1;
+      weight[1] -= 0.1;
+      continue;
+    } else if (c == '4'){
+      weight[0] -= 0.1;
+      weight[1] += 0.1;
+      continue;
+    }
 
 
-		int note = piano_keys[c];
-		int used = 0;
-		for(int i = 28; i <= 68; i++){
-			if(all_notes[i].active)
-				used += 1;
-		}
-		printf("used: %d\n", used);
-		printf("Note: %i\n", note);
+    int note = piano_keys[c];
+    int used = 0;
+    for(int i = 28; i <= 68; i++){
+      if(all_notes[i].active)
+	used += 1;
+    }
+    //printf("used: %d\n", used);
+    //printf("Note: %i\n", note);
 
-		all_notes[note].phase = 0.0;
-		all_notes[note].active = true;
-		all_notes[note].attack = clock();
-		all_notes[note].release = clock()+0.05*CLOCKS_PER_SEC;
+    all_notes[note].phase = 0.0;
+    all_notes[note].active = true;
+    all_notes[note].attack = clock();
+    all_notes[note].release = clock()+0.05*CLOCKS_PER_SEC;
 
-	}
-	exit(EXIT_SUCCESS);
+  }
+  exit(EXIT_SUCCESS);
 }
 
 static void combine_sounds(const snd_pcm_channel_area_t *areas, 
@@ -190,114 +257,106 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 		int count)
 {
 
-	unsigned char *samples[channels];
-	int steps[channels];
-	unsigned int chn;
-	int format_bits = snd_pcm_format_width(format);
-	unsigned int maxval = (1 << (format_bits - 1)) - 1;
-	int bps = format_bits / 8;  /* bytes per sample */
-	int phys_bps = snd_pcm_format_physical_width(format) / 8;
-	int big_endian = snd_pcm_format_big_endian(format) == 1;
-	int to_unsigned = snd_pcm_format_unsigned(format) == 1;
-	int is_float = (format == SND_PCM_FORMAT_FLOAT_LE ||
-			format == SND_PCM_FORMAT_FLOAT_BE);
+  unsigned char *samples[channels];
+  int steps[channels];
+  unsigned int chn;
+  int format_bits = snd_pcm_format_width(format);
+  unsigned int maxval = (1 << (format_bits - 1)) - 1;
+  int bps = format_bits / 8;  /* bytes per sample */
+  int phys_bps = snd_pcm_format_physical_width(format) / 8;
+  int big_endian = snd_pcm_format_big_endian(format) == 1;
+  int to_unsigned = snd_pcm_format_unsigned(format) == 1;
+  int is_float = (format == SND_PCM_FORMAT_FLOAT_LE ||
+      format == SND_PCM_FORMAT_FLOAT_BE);
 
-	double whatwave(double x){
-		if(x > M_PI)
-			return 1.0;
-		else
-			return -1.0;
-	}
-
-	/* verify and prepare the contents of areas */
-	for (chn = 0; chn < channels; chn++) {
-		if ((areas[chn].first % 8) != 0) {
-			printf("areas[%i].first == %i, aborting...\n", chn, areas[chn].first);
-			exit(EXIT_FAILURE);
-		}
-		samples[chn] = /*(signed short *)*/(((unsigned char *)areas[chn].addr) + (areas[chn].first / 8));
-		if ((areas[chn].step % 16) != 0) {
-			printf("areas[%i].step == %i, aborting...\n", chn, areas[chn].step);
-			exit(EXIT_FAILURE);
-		}
-		steps[chn] = areas[chn].step / 8;
-		samples[chn] += offset * steps[chn];
-	}
+  /* verify and prepare the contents of areas */
+  for (chn = 0; chn < channels; chn++) {
+    if ((areas[chn].first % 8) != 0) {
+      printf("areas[%i].first == %i, aborting...\n", chn, areas[chn].first);
+      exit(EXIT_FAILURE);
+    }
+    samples[chn] = /*(signed short *)*/(((unsigned char *)areas[chn].addr) + (areas[chn].first / 8));
+    if ((areas[chn].step % 16) != 0) {
+      printf("areas[%i].step == %i, aborting...\n", chn, areas[chn].step);
+      exit(EXIT_FAILURE);
+    }
+    steps[chn] = areas[chn].step / 8;
+    samples[chn] += offset * steps[chn];
+  }
 
 
   calc_filter_parameters();
-  fprintf(logfile,"%d %lf %lf : %lf %lf %lf %lf %lf\n", *rot_state, r, c, a1, a2, a3, b1, b2);
+  //fprintf(logfile,"%d %lf %lf : %lf %lf %lf %lf %lf\n", *rot_state, r, c, a1, a2, a3, b1, b2);
 
-	/* fill the channel areas */
-	while (count-- > 0) {
+  /* fill the channel areas */
+  while (count-- > 0) {
 
-		union {
-			float f;
-			int i;
-		} fval;
+    union {
+      float f;
+      int i;
+    } fval;
 
-		int res, i;
-		if (is_float) {
-			fval.f = sin(0);
-			res = fval.i;
-			printf("IS_FLOAT!!\n");
-		} else {
-			res = 0;
+    int res, i;
+    if (is_float) {
+      fval.f = sin(0);
+      res = fval.i;
+    } else {
+      res = 0;
 
-			clock_t clock_now = clock();
-			for(int i = 28; i <= 68; i++){
-				Note* n = &(all_notes[i]);
+      clock_t clock_now = clock();
+      for(int i = 28; i <= 68; i++){
+	Note* n = &(all_notes[i]);
 
-				if(! n->active )
-					continue;
+	if(! n->active )
+	  continue;
 
-				for(int i = 1; i < 3; i++){
-					n->last_clear[i] = n->last_clear[i-1];
-					n->last_final[i] = n->last_final[i-1];
-				}
-
-				double adsr_val = bad_adsr(n, clock_now);
-
-				double harmonics_total = 0.0;
-				int harmonics_num = 8;
-				for(int i = 1; i <= harmonics_num; i++)
-					harmonics_total += sinf(n->phase * i);
-        
-				n->last_clear[0] = harmonics_total / harmonics_num * adsr_val * maxval;
-
-				n->last_final[0] = 
-					a1 * n->last_clear[0]
-					+ a2 * n->last_clear[1]
-					+ a3 * n->last_clear[2]
-					- b1 * n->last_final[1]
-					- b2 * n->last_final[2];
-
-				n->phase += n->step;
-				if (n->phase >= max_phase*harmonics_num){
-					n->phase -= max_phase*harmonics_num;
-				}
-
-				res += n->last_final[0];
-			}
-
-			res /= 10.0;
-		}
-
-		if (to_unsigned)
-			res ^= 1U << (format_bits - 1);
-
-		for (chn = 0; chn < channels; chn++) {
-			/* Generate data in native endian format */
-			if (big_endian) {
-				for (i = 0; i < bps; i++)
-					*(samples[chn] + phys_bps - 1 - i) = (res >> i * 8) & 0xff;
-			} else {
-				for (i = 0; i < bps; i++)
-					*(samples[chn] + i) = (res >>  i * 8) & 0xff;
-			}
-			samples[chn] += steps[chn];
-		}
+	for(int i = 1; i < 3; i++){
+	  n->last_clear[i] = n->last_clear[i-1];
+	  n->last_final[i] = n->last_final[i-1];
 	}
+
+	double adsr_val = bad_adsr(n, clock_now);
+
+	double clear_total = 0.0;
+
+	clear_total += osc_wave1(n->phase) * weight[0] + osc_wave2(n->phase) * weight[1];
+
+	n->last_clear[0] = clear_total * adsr_val * maxval;
+
+	n->last_final[0] = 
+	  a1 * n->last_clear[0];
+	  /* a1 * n->last_clear[0] */
+	  /* + a2 * n->last_clear[1] */
+	  /* + a3 * n->last_clear[2] */
+	  /* - b1 * n->last_final[1] */
+	  /* - b2 * n->last_final[2]; */
+
+	n->phase += n->step;
+	if (n->phase >= max_phase){
+	  n->phase -= max_phase;
+	}
+
+	res += n->last_final[0];
+      }
+
+      res /= 10.0;
+    }
+
+    if (to_unsigned)
+      res ^= 1U << (format_bits - 1);
+
+    for (chn = 0; chn < channels; chn++) {
+      /* Generate data in native endian format */
+      if (big_endian) {
+	for (i = 0; i < bps; i++)
+	  *(samples[chn] + phys_bps - 1 - i) = (res >> i * 8) & 0xff;
+      } else {
+	for (i = 0; i < bps; i++)
+	  *(samples[chn] + i) = (res >>  i * 8) & 0xff;
+      }
+      samples[chn] += steps[chn];
+    }
+  }
 }
 static int set_hwparams(snd_pcm_t *handle,
 		snd_pcm_hw_params_t *params,
@@ -700,11 +759,12 @@ int main(int argc, char *argv[])
 
   rot_state = mmap(NULL, sizeof *rot_state, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-  *rot_state = 20;
+  *rot_state = 100;
 
   int child;
 
   if((child = fork()) == 0){
+    /*
     prctl(PR_SET_PDEATHSIG, SIGHUP);
     if (gpioInitialise()<0){
 	    printf("init failed\n");
@@ -729,6 +789,7 @@ int main(int argc, char *argv[])
     gpioSetAlertFunc(pb, 0);
 
     gpioTerminate();
+    */
     exit(EXIT_SUCCESS);
   }
 
