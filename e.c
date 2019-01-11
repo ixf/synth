@@ -228,68 +228,63 @@ void control_loop(){
     all_notes[i].step = max_phase*(freq)/(double)rate;
   }
 
-  char c;
-  while( c != 27 ){ // escape
-    c = getch();
-    //printf("%i\n", c);
-    if( c == '-' ){
-      *rot_state -= 1;
-      printf("rot_state: %d\n", *rot_state);
 
-	struct input_event ev[64];
-  	int fd, rd, value, code, size = sizeof (struct input_event);
-  	char name[256] = "Unknown";
-  	char *device = NULL;
+  struct input_event ev[64];
+  int fd, rd, value, code, size = sizeof (struct input_event);
+  char name[256] = "Unknown";
+  char *device = NULL;
 
-  	if ((getuid ()) != 0)
-    	printf ("You are not root! This may not work...n/");
+  if ((getuid ()) != 0)
+    printf ("You are not root! This may not work...n/");
 
- 	device = "/dev/input/event3";
-  	//Open Device
-  	if ((fd = open (device, O_RDONLY)) == -1)
-    	printf ("%s is not a vaild device.n", device);
-	ioctl (fd, EVIOCGNAME (sizeof (name)), name);
-	printf ("IO: Reading From : %s (%s)\n", device, name);
-  	fflush(stdout); 
+  device = "/dev/input/event3";
+  //Open Device
+  if ((fd = open (device, O_RDONLY)) == -1)
+    printf ("%s is not a vaild device.n", device);
+  ioctl (fd, EVIOCGNAME (sizeof (name)), name);
+  printf ("IO: Reading From : %s (%s)\n", device, name);
+  fflush(stdout); 
 
 
-	while (1){
-		if ((rd = read (fd, ev, size * 64)) < size)
-			perror("Error reading");  
-		value = ev[1].value;
-		code = ev[1].code;
-		if (ev[1].value !=2 && ev[1].type == 1){
-			//got char
-			printf ("Code[%d] %d \n", (ev[1].code), (ev[1].value));
-			fflush(stdout);
-			printf ("Code = %d \n",code);
+  while (1){
+    if ((rd = read (fd, ev, size * 64)) < size)
+      perror("Error reading");  
+    value = ev[1].value;
+    code = ev[1].code;
+    if (ev[1].value !=2 && ev[1].type == 1){
+      //got char
+      printf ("Code[%d] %d \n", (ev[1].code), (ev[1].value));
+      fflush(stdout);
+      printf ("Code = %d \n",code);
 
-			if( code == 12 ){
-				CUTOFF -= 50;
-      			printf("cutoff: %lf\n", CUTOFF);
-	  			fflush(stdout);
-      			continue;
-    		} else if (code == 13){
-      			CUTOFF += 50;
-      			printf("cutoff: %lf\n", CUTOFF);
-				fflush(stdout);
-				continue;
-			}
-		
-			int note = piano_keys[code];
-			if(value == 1){
-				//PRESS
-				all_notes[note].phase = 0.0;
-				all_notes[note].active = true;
-				all_notes[note].attack = clock();
-				all_notes[note].release = -1;
-			}else{
-				//RELEASE
-				all_notes[note].release = clock();
-			}
-		}
-  	}  
-	exit(EXIT_SUCCESS);
+      /*
+      if( code == 12 ){
+	CUTOFF -= 50;
+	printf("cutoff: %lf\n", CUTOFF);
+	fflush(stdout);
+	continue;
+      } else if (code == 13){
+	CUTOFF += 50;
+	printf("cutoff: %lf\n", CUTOFF);
+	fflush(stdout);
+	continue;
+      }
+      */
+
+      int note = piano_keys[code];
+      if(value == 1){
+	//PRESS
+	all_notes[note].phase = 0.0;
+	all_notes[note].active = true;
+	all_notes[note].attack = clock();
+	all_notes[note].release = -1;
+      }else{
+	//RELEASE
+	all_notes[note].release = clock();
+      }
+    }
+  }  
+  exit(EXIT_SUCCESS);
 }
 
 static void combine_sounds(const snd_pcm_channel_area_t *areas,
@@ -797,7 +792,7 @@ int main(int argc, char *argv[])
 
   *rot_state = 100;
 
-/*   int child; */
+  int child;
 
   if((child = fork()) == 0){
     /*
