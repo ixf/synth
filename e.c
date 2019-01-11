@@ -22,6 +22,16 @@
 
 #include <ncurses.h>
 
+#include <fcntl.h>
+#include <dirent.h>
+#include <linux/input.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <termios.h>
+ 
+
 // dzielone
 static int *rot_state;
 
@@ -177,13 +187,13 @@ double freq_calc(int n){ // A4 = 49 -> 440Hz
 }
 
 char piano_keys[255] = { 0 };
-void init_piano_keys(int starting, char* keys){
+void init_piano_keys(int starting, int* keys, int count){
 	// przyklad: 40, "awsed"
 	// piano_keys['a'] = 40
 	// piano_keys['w'] = 41
 	// ...
 
-	for(int i = 0; keys[i] != 0; i++){
+	for(int i = 0; i < count; i++){
 		piano_keys[keys[i]] = starting+i;
 	}
 
@@ -226,46 +236,60 @@ void control_loop(){
       *rot_state -= 1;
       printf("rot_state: %d\n", *rot_state);
 
-      continue;
-    } else if (c == '+'){
-      *rot_state += 1;
-      printf("rot_state: %d\n", *rot_state);
-      continue;
-    /* } else if( c == '1' ){ */
-    /*   CUTOFF -= 50; */
-    /*   printf("cutoff: %lf\n", CUTOFF); */
-    /*   continue; */
-    /* } else if (c == '2'){ */
-    /*   CUTOFF += 50; */
-    /*   printf("cutoff: %lf\n", CUTOFF); */
-    /*   continue; */
-    } else if (c == '3'){
-      weight[0] += 0.1;
-      weight[1] -= 0.1;
-      continue;
-    } else if (c == '4'){
-      weight[0] -= 0.1;
-      weight[1] += 0.1;
-      continue;
-    }
+	struct input_event ev[64];
+  	int fd, rd, value, code, size = sizeof (struct input_event);
+  	char name[256] = "Unknown";
+  	char *device = NULL;
+
+  	if ((getuid ()) != 0)
+    	printf ("You are not root! This may not work...n/");
+
+ 	device = "/dev/input/event3";
+  	//Open Device
+  	if ((fd = open (device, O_RDONLY)) == -1)
+    	printf ("%s is not a vaild device.n", device);
+	ioctl (fd, EVIOCGNAME (sizeof (name)), name);
+	printf ("IO: Reading From : %s (%s)\n", device, name);
+  	fflush(stdout); 
 
 
-    int note = piano_keys[c];
-    int used = 0;
-    for(int i = 28; i <= 68; i++){
-      if(all_notes[i].active)
-	used += 1;
-    }
-    //printf("used: %d\n", used);
-    //printf("Note: %i\n", note);
+	while (1){
+		if ((rd = read (fd, ev, size * 64)) < size)
+			perror("Error reading");  
+		value = ev[1].value;
+		code = ev[1].code;
+		if (ev[1].value !=2 && ev[1].type == 1){
+			//got char
+			printf ("Code[%d] %d \n", (ev[1].code), (ev[1].value));
+			fflush(stdout);
+			printf ("Code = %d \n",code);
 
-    all_notes[note].phase = 0.0;
-    all_notes[note].active = true;
-    all_notes[note].attack = clock();
-    all_notes[note].release = clock()+0.05*CLOCKS_PER_SEC;
-
-  }
-  exit(EXIT_SUCCESS);
+			if( code == 12 ){
+				CUTOFF -= 50;
+      			printf("cutoff: %lf\n", CUTOFF);
+	  			fflush(stdout);
+      			continue;
+    		} else if (code == 13){
+      			CUTOFF += 50;
+      			printf("cutoff: %lf\n", CUTOFF);
+				fflush(stdout);
+				continue;
+			}
+		
+			int note = piano_keys[code];
+			if(value == 1){
+				//PRESS
+				all_notes[note].phase = 0.0;
+				all_notes[note].active = true;
+				all_notes[note].attack = clock();
+				all_notes[note].release = -1;
+			}else{
+				//RELEASE
+				all_notes[note].release = clock();
+			}
+		}
+  	}  
+	exit(EXIT_SUCCESS);
 }
 
 static void combine_sounds(const snd_pcm_channel_area_t *areas,
@@ -773,7 +797,7 @@ int main(int argc, char *argv[])
 
   *rot_state = 100;
 
-  int child;
+/*   int child; */
 
   if((child = fork()) == 0){
     /*
@@ -806,15 +830,12 @@ int main(int argc, char *argv[])
   }
 
 
-  //calc_filter_parameters();
-
   initscr();
 
-  init_piano_keys(52, "Q@W#ER%T^Y&UI(O)P");
-  init_piano_keys(40, "ZSXDCVGBHNJM<l>:?");
-
-  init_piano_keys(40, "q2w3er5t6y7ui9o0p");
-  init_piano_keys(28, "zsxdcvgbhnjm,l.;/");
+  int top_row[] = { 16, 3,  17,  4, 18, 19,  6, 20,  7, 21,  8, 22 };
+  int bot_row[] = { 44, 31, 45, 32, 46, 47, 34, 48, 35, 49, 36, 50 };
+  init_piano_keys(52, top_row, sizeof(top_row)/sizeof(top_row[0]));
+  init_piano_keys(40, bot_row, sizeof(bot_row)/sizeof(bot_row[0]));
 
   struct option long_option[] =
   {
@@ -967,7 +988,7 @@ int main(int argc, char *argv[])
   free(samples);
   snd_pcm_close(handle);
 
-  kill(child, 9);
+  //kill(child, 9);
   wait(NULL);
   munmap(rot_state, sizeof *rot_state);
 
