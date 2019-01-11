@@ -124,10 +124,6 @@ void calc_filter_parameters(){
 typedef struct {} Macro;
 
 typedef struct {
-	float (*adsr)(Note);
-} Sound;
-
-typedef struct {
 	clock_t attack;
 	clock_t release;
 	double freq;
@@ -139,6 +135,11 @@ typedef struct {
 
 	bool active;
 } Note;
+
+typedef struct {
+	double (*adsr)(Note* note, clock_t now);
+} Sound;
+
 
 
 double bad_adsr(Note *n, clock_t now){
