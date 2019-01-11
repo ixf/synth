@@ -25,8 +25,6 @@
 // dzielone
 static int *rot_state;
 
-FILE* logfile;
-
 // dla forka:
 
 int last_gpio = 18;
@@ -103,23 +101,53 @@ double weight[2] = { 0.5, 0.5 };
 wave_ptr osc_wave1 = sin_wave;
 wave_ptr osc_wave2 = sawup_wave;
 
+typedef struct {
+  double phi;
+  double lambda;
+  int size;
 
+  double* samples;
+  double* params;
 
-volatile double CUTOFF = 300.0;
+} BandpassFilter;
 
-double r,c,a1,a2,a3,b1,b2;
+void init_bpf(BandpassFilter* filter, double flow, double fhigh, int size){
+  filter->lambda = M_PI * flow / (44100/2);
+  filter->phi = M_PI * fhigh / (44100/2);
+  filter->size = size;
 
-void calc_filter_parameters(){
+  filter->samples = malloc(sizeof(double) * size);
+  filter->params = malloc(sizeof(double) * size);
 
-  // hipass
-  r = *rot_state/100.0;
-  c = tan(M_PI * CUTOFF / 44100);
-  a1 = 1.0 / ( 1.0 + r*c + c*c);
-  a2 = -2*a1;
-  a3 = a1;
-  b1 = 2.0 * ( c*c - 1.0 ) * a1;
-  b2 = ( 1.0 - r*c + c*c) * a1;
+  for(int i = 0; i < size; i++){
+    filter->samples[i] = 0;
+
+    double dist = i - (size - 1.0) / 2.0;
+    if( dist == 0.0 ){
+      filter->params[i] = (filter->phi - filter->lambda) / M_PI;
+    } else {
+      filter->params[i] = ( sin( dist * filter->phi ) - sin( dist * filter->lambda )) / (dist * M_PI);
+    }
+  }
 }
+
+double get_filtered_sample(BandpassFilter* f, double in){
+
+  for(int i = f->size - 1; i > 0; i--){
+    f->samples[i] = f->samples[i-1];
+  }
+
+  f->samples[0] = in;
+
+  double result = 0;
+  for(int i = 0; i < f->size; i++){
+    result += f->samples[i] * f->params[i];
+  }
+
+  return result;
+}
+
+
 
 typedef struct {} Macro;
 
@@ -130,17 +158,8 @@ typedef struct {
 	double step;
 	double phase;
 
-	double last_clear[3];
-	double last_final[3];
-
 	bool active;
 } Note;
-
-typedef struct {
-	double (*adsr)(Note* note, clock_t now);
-} Sound;
-
-
 
 double bad_adsr(Note *n, clock_t now){
 	if(n->release == -1){
@@ -157,8 +176,6 @@ double freq_calc(int n){ // A4 = 49 -> 440Hz
 	return 440.0 * pow(2.0, (n-49)/12.0);
 }
 
-Note all_notes[104];
-
 char piano_keys[255] = { 0 };
 void init_piano_keys(int starting, char* keys){
 	// przyklad: 40, "awsed"
@@ -172,7 +189,9 @@ void init_piano_keys(int starting, char* keys){
 
 }
 
-Sound main_sound = { bad_adsr };
+double (*main_adsr)(Note* note, clock_t now);
+BandpassFilter main_filter;
+Note all_notes[104];
 
 static char *device = "plughw:0,0";                     /* playback device */
 static snd_pcm_format_t format = SND_PCM_FORMAT_S16;    /* sample format */
@@ -205,25 +224,21 @@ void control_loop(){
     //printf("%i\n", c);
     if( c == '-' ){
       *rot_state -= 1;
-      //printf("rot_state: %d\n", *rot_state);
+      printf("rot_state: %d\n", *rot_state);
 
-      /* CUTOFF -= 50; */
-      /* printf("cutoff: %lf\n", CUTOFF); */
       continue;
     } else if (c == '+'){
       *rot_state += 1;
-      //printf("rot_state: %d\n", *rot_state);
-      /* CUTOFF += 50; */
-      /* printf("cutoff: %lf\n", CUTOFF); */
+      printf("rot_state: %d\n", *rot_state);
       continue;
-    } else if( c == '1' ){
-      CUTOFF -= 50;
-      //printf("cutoff: %lf\n", CUTOFF);
-      continue;
-    } else if (c == '2'){
-      CUTOFF += 50;
-      //printf("cutoff: %lf\n", CUTOFF);
-      continue;
+    /* } else if( c == '1' ){ */
+    /*   CUTOFF -= 50; */
+    /*   printf("cutoff: %lf\n", CUTOFF); */
+    /*   continue; */
+    /* } else if (c == '2'){ */
+    /*   CUTOFF += 50; */
+    /*   printf("cutoff: %lf\n", CUTOFF); */
+    /*   continue; */
     } else if (c == '3'){
       weight[0] += 0.1;
       weight[1] -= 0.1;
@@ -286,8 +301,7 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
   }
 
 
-  calc_filter_parameters();
-  //fprintf(logfile,"%d %lf %lf : %lf %lf %lf %lf %lf\n", *rot_state, r, c, a1, a2, a3, b1, b2);
+  //calc_filter_parameters();
 
   /* fill the channel areas */
   while (count-- > 0) {
@@ -311,36 +325,31 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 	if(! n->active )
 	  continue;
 
-	for(int i = 1; i < 3; i++){
-	  n->last_clear[i] = n->last_clear[i-1];
-	  n->last_final[i] = n->last_final[i-1];
-	}
+	double adsr_val = main_adsr(n, clock_now);
+	
 
-	double adsr_val = bad_adsr(n, clock_now);
+	// suma z dwóch fal:
+	double osc_total = osc_wave1(n->phase) * weight[0] + osc_wave2(n->phase) * weight[1];
 
-	double clear_total = 0.0;
+	// efekt ADSR
+	osc_total = osc_total * adsr_val * maxval;
 
-	clear_total += osc_wave1(n->phase) * weight[0] + osc_wave2(n->phase) * weight[1];
-
-	n->last_clear[0] = clear_total * adsr_val * maxval;
-
-	n->last_final[0] =
-	  a1 * n->last_clear[0];
-	  /* a1 * n->last_clear[0] */
-	  /* + a2 * n->last_clear[1] */
-	  /* + a3 * n->last_clear[2] */
-	  /* - b1 * n->last_final[1] */
-	  /* - b2 * n->last_final[2]; */
+	// todo maxval przenieść?
 
 	n->phase += n->step;
 	if (n->phase >= max_phase){
 	  n->phase -= max_phase;
 	}
 
-	res += n->last_final[0];
+	res += osc_total;
       }
 
       res /= 10.0;
+
+      // teraz res jest wartością z sumy wszystkich Note
+      // wrzucamy do filtra bandpass:
+
+      res = get_filtered_sample(&main_filter, res);
     }
 
     if (to_unsigned)
@@ -756,7 +765,9 @@ static void help(void)
 int main(int argc, char *argv[])
 {
 
-  logfile = fopen("logs", "w");
+  main_adsr = bad_adsr;
+  init_bpf( &(main_filter), 3000, 4000, 17);
+ 
 
   rot_state = mmap(NULL, sizeof *rot_state, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
@@ -795,11 +806,7 @@ int main(int argc, char *argv[])
   }
 
 
-  calc_filter_parameters();
-
-
-  //execle("./rotary", "./rotary");
-  //perror("wtf:");
+  //calc_filter_parameters();
 
   initscr();
 
