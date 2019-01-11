@@ -1,9 +1,10 @@
-/*
- *  This small demo sends a simple sinusoidal wave to your speakers.
- */
+
 #include <stdlib.h>
 #include <stdio.h>
-//#include <pigpio.h>
+
+#ifdef MAKE_PI
+#include <pigpio.h>
+#endif
 
 #include <sys/time.h>
 #include <sys/mman.h>
@@ -792,10 +793,10 @@ int main(int argc, char *argv[])
 
   *rot_state = 100;
 
+#ifdef MAKE_PI
   int child;
 
   if((child = fork()) == 0){
-    /*
     prctl(PR_SET_PDEATHSIG, SIGHUP);
     if (gpioInitialise()<0){
 	    printf("init failed\n");
@@ -820,9 +821,9 @@ int main(int argc, char *argv[])
     gpioSetAlertFunc(pb, 0);
 
     gpioTerminate();
-    */
     exit(EXIT_SUCCESS);
   }
+#endif
 
 
   initscr();
@@ -983,7 +984,9 @@ int main(int argc, char *argv[])
   free(samples);
   snd_pcm_close(handle);
 
-  //kill(child, 9);
+#ifdef MAKE_PI
+  kill(child, 9);
+#endif
   wait(NULL);
   munmap(rot_state, sizeof *rot_state);
 

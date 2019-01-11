@@ -4,7 +4,7 @@ all: e.c
 	gcc e.c -o e $(FLAGI)
 
 pi: e.c
-	gcc e.c -o e $(FLAGI) -I./PIGPIO/ -L./PIGPIO/ -l:libpigpio.so
+	gcc e.c -o e $(FLAGI) -I./PIGPIO/ -L./PIGPIO/ -l:libpigpio.so -DMAKE_PI
 
 o: e.c
 	gcc e.c -o e $(FLAGI) -O3
