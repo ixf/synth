@@ -230,7 +230,7 @@ void control_loop(){
   }
 
 
-  struct input_event ev[64];
+  struct input_event ev[1];
   int fd, rd, value, code, size = sizeof (struct input_event);
   char name[256] = "Unknown";
   char *device = NULL;
@@ -238,7 +238,7 @@ void control_loop(){
   if ((getuid ()) != 0)
     printf ("You are not root! This may not work...n/");
 
-  device = "/dev/input/event3";
+  device = "/dev/input/event0";
   //Open Device
   if ((fd = open (device, O_RDONLY)) == -1)
     printf ("%s is not a vaild device.n", device);
@@ -248,13 +248,13 @@ void control_loop(){
 
 
   while (1){
-    if ((rd = read (fd, ev, size * 64)) < size)
+    if ((rd = read (fd, ev, size )) < size)
       perror("Error reading");  
-    value = ev[1].value;
-    code = ev[1].code;
-    if (ev[1].value !=2 && ev[1].type == 1){
+    value = ev[0].value;
+    code = ev[0].code;
+    if (value !=2 && ev[0].type == 1){
       //got char
-      printf ("Code[%d] %d \n", (ev[1].code), (ev[1].value));
+      printf ("Code[%d] %d \n", code, value);
       fflush(stdout);
       printf ("Code = %d \n",code);
 
