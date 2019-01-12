@@ -183,6 +183,80 @@ double bad_adsr(Note *n, clock_t now){
 	return r;
 }
 
+
+// parametry:
+// A -- ATTACK -- maks czas rośnięcia od 0.0 do 1.0 kiedy klawisz jest wciśnięty
+// D -- RELEASE -- czas wyciszania kiedy klawisz jest nadal wciśnięty
+// S -- SUSTAIN -- głośność w jakiej nuta się utrzyma kiedy klawisz będzie przytrzymany
+// R -- RELEASE -- cza
+
+typedef struct {
+  double a;
+  double d;
+  double s;
+  double r;
+} adsr_params;
+
+adsr_params main_adsr_params = {0.03, 0.5, 0.2, 0.5};
+
+double lin_adsr(Note *n, clock_t now){
+  double x = (now - n->attack)/((double)CLOCKS_PER_SEC);
+  double a = main_adsr_params.a, d = main_adsr_params.d,
+	 s = main_adsr_params.s, r = main_adsr_params.s;
+  if( n->release == -1 ){
+
+    if( x > a + d ){
+      // 1. klawisz wciśnięty długo ( więcej niż A+D ) -> etap sustain
+      printf("1");
+      return s;
+    } else if( x < a ) {
+      // 2. trzymany krócej niż A
+      printf("2");
+      return x / a;
+    } else {
+      // 3. trzymany dłużej niż A, ale krócej niż A+D
+      printf("3");
+      return s+(1.0-s)*(x-a)/d;
+    }
+    
+  } else {
+    if( x > a+d ){
+      // klawisz puszczony po długim czasie
+      // a+d-x == czas w etapie release * -1
+      // /r -- do 0-1
+      // *s -- do 0-s
+      
+      // przy okazji oznaczamy jako nieaktywny czasami
+      if( (x-a-d) > r ){
+	n->active = false;
+	return 0.0;
+      }
+
+
+      return (a+d-x)*s/r;
+    } else {
+      // klawisz puszczony przed czasem a+d!
+      // aby było gładko itd należy przez czas r wygłuszać dźwięk od
+      // poprzedniej wartości do 0
+      // poprzednią wartość obliczamy jakby n->release było równe -1
+      // a naszym nowym x jest czas od released to tearz
+      double x0 = (n->release - n->attack)/CLOCKS_PER_SEC;
+      double x2 = (now - n->release)/CLOCKS_PER_SEC;
+      double y;
+
+      if( x0 < a ) {
+	y = x0 / a;
+      } else {
+	y = s+(1.0-s)*(x0-a)/d;
+      }
+
+      return y * x2/r;
+
+    }
+
+  }
+}
+
 double freq_calc(int n){ // A4 = 49 -> 440Hz
 	return 440.0 * pow(2.0, (n-49)/12.0);
 }
@@ -782,8 +856,7 @@ static void help(void)
 	printf("\n");
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
 
   main_adsr = bad_adsr;
   init_bpf( &(main_filter), 3000, 4000, 17);
