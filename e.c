@@ -33,43 +33,100 @@
 #include <termios.h>
  
 
-// dzielone
-static int *rot_state;
+// indeks elementu z shared_values który ma ma modyfikować n-ty enkoder
+// ustawiana przez główny proces, używa fork
+static int* shared_indexes;
 
-// dla forka:
+// tablica zmiennych ( przyjęliśmy że z zakresu 0-255 )
+// wartości zmienia fork, odczytuje główny
+static int* shared_values;
 
-int last_gpio = 18;
-int last_a = 0;
-int last_b = 0;
+#ifdef MAKE_PI
+typedef struct {
+  int last_a;
+  int last_b;
+  char state;
+} rotary_state;
 
-char state = 0x00;
-
-
-// 0001
-// 0111
-// 1110
-// 1000
-
-// 0100
-// 1101
-// 1011
-// 0010
+rotary_state rotary_states[6];
+int gpio_to_n[40]; // 0 do 6
+int gpio_to_ab[40]; // 0 lub 1
 
 void rot_callback(int GPIO, int level, unsigned int tick){
-	//printf("%d %d %d\n", *rot_state, GPIO, level);
-	state <<= 2;
-	if(level)
-		if(GPIO == 18)
-			state |= 2;
-		else
-			state |= 1;
-	state &= 0xF;
 
-	if(state == 1 || state == 7 || state == 14 || state == 8)
-		*rot_state += 1;
-	else if(state == 4 || state == 13 || state == 2 || state == 11)
-		*rot_state -= 1;
+  // n-ty enkoder, wejście a lub b
+  int n = gpio_to_n[GPIO];
+  int ab = gpio_to_ab[GPIO];
+
+  rotary_state* rs = &(rotary_states[n]);
+
+  rs->state <<= 2;
+  /* if(level) */
+  /*   if(gpio_to_ab[GPIO] == 0) */
+  /*     rs->state |= 2; */
+  /*   else */
+  /*     rs->state |= 1; */
+  if(ab == 0){
+    if(level)
+      rs->state |= 0b0010;
+    if(rs->last_b)
+      rs->state |= 0b0001;
+  } else {
+    if(rs->last_a)
+      rs->state |= 0b0010;
+    if(level)
+      rs->state |= 0b0001;
+  }
+  rs->state &= 0xF;
+
+  // 0001
+  // 0111
+  // 1110
+  // 1000
+
+  // 0100
+  // 1101
+  // 1011
+  // 0010
+  
+  int shared_index = shared_indexes[n];
+  if(rs->state == 1 || rs->state == 7 || rs->state == 14 || rs->state == 8)
+    shared_values[shared_index] += 1;
+  else if(rs->state == 4 || rs->state == 13 || rs->state == 2 || rs->state == 11)
+    shared_values[shared_index] -= 1;
+
+  if(shared_values[shared_index] > 255)
+    shared_values[shared_index] = 255;
+  else if (shared_values[shared_index] < 0)
+    shared_values[shared_index] = 0;
 }
+
+void setup_rotary_encoder(int pa, int pb, int n){
+    gpio_to_ab[pa] = 0;
+    gpio_to_ab[pb] = 1;
+    shared_indexes[pa] = n;
+    shared_indexes[pb] = n;
+
+    gpioSetMode(pa, PI_INPUT);
+    gpioSetMode(pb, PI_INPUT);
+
+    gpioSetPullUpDown(pa, PI_PUD_UP);
+    gpioSetPullUpDown(pb, PI_PUD_UP);
+
+    gpioSetAlertFunc(pa, rot_callback);
+    gpioSetAlertFunc(pb, rot_callback);
+
+    /* gpioSetAlertFunc(pa, 0); */
+    /* gpioSetAlertFunc(pb, 0); */
+    /* gpioTerminate(); */
+}
+
+void child_setup(){
+  setup_rotary_encoder(18,23,0);
+}
+#endif 
+
+// **************************************** FALE
 
 double sin_wave(double x){
   return sinf(x);
@@ -111,6 +168,8 @@ typedef double (*wave_ptr)(double x);
 double weight[2] = { 0.5, 0.5 };
 wave_ptr osc_wave1 = sin_wave;
 wave_ptr osc_wave2 = sawup_wave;
+
+//**************************************** FILTR
 
 typedef struct {
   double phi;
@@ -159,9 +218,6 @@ double get_filtered_sample(BandpassFilter* f, double in){
 }
 
 
-
-typedef struct {} Macro;
-
 typedef struct {
 	clock_t attack;
 	clock_t release;
@@ -171,6 +227,8 @@ typedef struct {
 
 	bool active;
 } Note;
+
+//**************************************** ADSR
 
 double bad_adsr(Note *n, clock_t now){
 	if(n->release == -1){
@@ -188,7 +246,7 @@ double bad_adsr(Note *n, clock_t now){
 // A -- ATTACK -- maks czas rośnięcia od 0.0 do 1.0 kiedy klawisz jest wciśnięty
 // D -- RELEASE -- czas wyciszania kiedy klawisz jest nadal wciśnięty
 // S -- SUSTAIN -- głośność w jakiej nuta się utrzyma kiedy klawisz będzie przytrzymany
-// R -- RELEASE -- cza
+// R -- RELEASE -- czas wyciszania po puszczeniu klawisza
 
 typedef struct {
   double a;
@@ -206,22 +264,22 @@ double lin_adsr(Note *n, clock_t now){
   if( n->release == -1 ){
 
     if( x > a + d ){
-      // 1. klawisz wciśnięty długo ( więcej niż A+D ) -> etap sustain
+      // etap sustain
       printf("1");
       return s;
     } else if( x < a ) {
-      // 2. trzymany krócej niż A
+      // etap attack
       printf("2");
       return x / a;
     } else {
-      // 3. trzymany dłużej niż A, ale krócej niż A+D
+      // delay
       printf("3");
       return s+(1.0-s)*(x-a)/d;
     }
     
   } else {
-    if( x > a+d ){
-      // klawisz puszczony po długim czasie
+    if( x >= a+d ){
+      // sustain
       // a+d-x == czas w etapie release * -1
       // /r -- do 0-1
       // *s -- do 0-s
@@ -232,10 +290,10 @@ double lin_adsr(Note *n, clock_t now){
 	return 0.0;
       }
 
-
       return (a+d-x)*s/r;
     } else {
-      // klawisz puszczony przed czasem a+d!
+      // przed sustain
+      //
       // aby było gładko itd należy przez czas r wygłuszać dźwięk od
       // poprzedniej wartości do 0
       // poprzednią wartość obliczamy jakby n->release było równe -1
@@ -253,7 +311,6 @@ double lin_adsr(Note *n, clock_t now){
       return y * x2/r;
 
     }
-
   }
 }
 
@@ -862,9 +919,7 @@ int main(int argc, char *argv[]) {
   init_bpf( &(main_filter), 3000, 4000, 17);
  
 
-  rot_state = mmap(NULL, sizeof *rot_state, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-  *rot_state = 100;
+  shared_values = mmap(NULL, 6*sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
 #ifdef MAKE_PI
   int child;
@@ -876,24 +931,9 @@ int main(int argc, char *argv[]) {
       return 1;
     }
 
-    int pa = 18;
-    int pb = 23;
+    child_setup();
+    while(1){}
 
-    gpioSetMode(pa, PI_INPUT);
-    gpioSetMode(pb, PI_INPUT);
-
-    gpioSetPullUpDown(pa, PI_PUD_UP);
-    gpioSetPullUpDown(pb, PI_PUD_UP);
-
-    gpioSetAlertFunc(pa, rot_callback);
-    gpioSetAlertFunc(pb, rot_callback);
-
-    while(*rot_state < 10000){sleep(10);}
-
-    gpioSetAlertFunc(pa, 0);
-    gpioSetAlertFunc(pb, 0);
-
-    gpioTerminate();
     exit(EXIT_SUCCESS);
   }
 #endif
@@ -1061,7 +1101,8 @@ int main(int argc, char *argv[]) {
   kill(child, 9);
 #endif
   wait(NULL);
-  munmap(rot_state, sizeof *rot_state);
+  munmap(shared_indexes, sizeof(int)*6);
+  munmap(shared_values, sizeof(int)*40);
 
   endwin();
   return 0;
