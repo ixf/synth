@@ -265,50 +265,43 @@ double lin_adsr(Note *n, clock_t now){
 
     if( x > a + d ){
       // etap sustain
-      printf("1");
       return s;
     } else if( x < a ) {
       // etap attack
-      printf("2");
       return x / a;
     } else {
       // delay
-      printf("3");
-      return s+(1.0-s)*(x-a)/d;
+      return 1-(1.0-s)*(x-a)/d;
     }
     
   } else {
-    if( x >= a+d ){
-      // sustain
-      // a+d-x == czas w etapie release * -1
-      // /r -- do 0-1
-      // *s -- do 0-s
-      
-      // przy okazji oznaczamy jako nieaktywny czasami
-      if( (x-a-d) > r ){
-	n->active = false;
-	return 0.0;
-      }
+    double x0 = (n->release - n->attack)/((double)CLOCKS_PER_SEC);
+    double x2 = (now - n->release)/((double)CLOCKS_PER_SEC);
 
-      return (a+d-x)*s/r;
+    if( x2 > r ){
+      n->active = false;
+      return 0.0;
+    } else if( x0 >= a+d ){
+      // release po sustain
+      
+      return s * (r-x2)/r;
     } else {
-      // przed sustain
+      // release przed sustain
       //
       // aby było gładko itd należy przez czas r wygłuszać dźwięk od
       // poprzedniej wartości do 0
       // poprzednią wartość obliczamy jakby n->release było równe -1
-      // a naszym nowym x jest czas od released to tearz
-      double x0 = (n->release - n->attack)/CLOCKS_PER_SEC;
-      double x2 = (now - n->release)/CLOCKS_PER_SEC;
+      // a naszym nowym x jest czas od released do teraz
       double y;
 
       if( x0 < a ) {
 	y = x0 / a;
       } else {
-	y = s+(1.0-s)*(x0-a)/d;
+	y = 1-(1.0-s)*(x0-a)/d;
       }
 
-      return y * x2/r;
+
+      return y * (r-x2)/r;
 
     }
   }
@@ -328,7 +321,6 @@ void init_piano_keys(int starting, int* keys, int count){
 	for(int i = 0; i < count; i++){
 		piano_keys[keys[i]] = starting+i;
 	}
-
 }
 
 double (*main_adsr)(Note* note, clock_t now);
@@ -369,7 +361,7 @@ void control_loop(){
   if ((getuid ()) != 0)
     printf ("You are not root! This may not work...n/");
 
-  device = "/dev/input/event0";
+  device = "/dev/input/event4";
   //Open Device
   if ((fd = open (device, O_RDONLY)) == -1)
     printf ("%s is not a vaild device.n", device);
@@ -379,8 +371,10 @@ void control_loop(){
 
 
   while (1){
-    if ((rd = read (fd, ev, size )) < size)
+    if ((rd = read (fd, ev, size )) < size){
       perror("Error reading");  
+      abort();
+    }
     value = ev[0].value;
     code = ev[0].code;
     if (value !=2 && ev[0].type == 1){
@@ -477,7 +471,6 @@ static void combine_sounds(const snd_pcm_channel_area_t *areas,
 	  continue;
 
 	double adsr_val = main_adsr(n, clock_now);
-	
 
 	// suma z dwóch fal:
 	double osc_total = osc_wave1(n->phase) * weight[0] + osc_wave2(n->phase) * weight[1];
@@ -915,9 +908,8 @@ static void help(void)
 
 int main(int argc, char *argv[]) {
 
-  main_adsr = bad_adsr;
+  main_adsr = lin_adsr;
   init_bpf( &(main_filter), 3000, 4000, 17);
- 
 
   shared_values = mmap(NULL, 6*sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
