@@ -35,12 +35,26 @@
 #include "alsa_stuff.h"
 #include "main.h"
 
-
 FILE* logfile;
 
 // indeks elementu z shared_values który ma ma modyfikować n-ty enkoder
 // ustawiana przez główny proces, używa fork
 static int* shared_indexes;
+
+typedef struct {
+  double min;
+  double max;
+  double step;
+} range;
+
+range value_ranges[6] = {
+  {0, 8000, 100},
+  {0, 8000, 100},
+  {0, 5, 0.01},
+  {0, 5, 0.01},
+  {0, 1, 0.01},
+  {0, 5, 0.01}
+};
 
 // tablica zmiennych ( przyjęliśmy że z zakresu 0-255 )
 // wartości zmienia fork, odczytuje główny
@@ -65,12 +79,9 @@ void rot_callback(int GPIO, int level, unsigned int tick){
 
   rotary_state* rs = &(rotary_states[n]);
 
+  printf("rot callback!\n");
+
   rs->state <<= 2;
-  /* if(level) */
-  /*   if(gpio_to_ab[GPIO] == 0) */
-  /*     rs->state |= 2; */
-  /*   else */
-  /*     rs->state |= 1; */
   if(ab == 0){
     if(level)
       rs->state |= 0b0010;
@@ -95,22 +106,29 @@ void rot_callback(int GPIO, int level, unsigned int tick){
   // 0010
   
   int shared_index = shared_indexes[n];
-  if(rs->state == 1 || rs->state == 7 || rs->state == 14 || rs->state == 8)
-    shared_values[shared_index] += 0.005;
-  else if(rs->state == 4 || rs->state == 13 || rs->state == 2 || rs->state == 11)
-    shared_values[shared_index] -= 0.005;
+  range r = value_ranges[shared_index];
 
-  if(shared_values[shared_index] > 1.0)
-    shared_values[shared_index] = 1.0;
-  else if (shared_values[shared_index] < 0)
-    shared_values[shared_index] = 0.0;
+  printf("< sv[%d] := %lf\r\n", shared_index, shared_values[shared_index]);
+  if(rs->state == 1 || rs->state == 7 || rs->state == 14 || rs->state == 8){
+    double now = shared_values[shared_index] += r.step;
+    printf("> sv[%d] := %lf\r\n", shared_index, now);
+  }
+  else if(rs->state == 4 || rs->state == 13 || rs->state == 2 || rs->state == 11){
+    double now = shared_values[shared_index] -= r.step;
+    printf("sv[%d] := %lf\n", shared_index, now);
+  }
+
+  if(shared_values[shared_index] > r.max)
+    shared_values[shared_index] = r.max;
+  else if (shared_values[shared_index] < r.min)
+    shared_values[shared_index] = r.min;
 }
 
 void setup_rotary_encoder(int pa, int pb, int n){
     gpio_to_ab[pa] = 0;
     gpio_to_ab[pb] = 1;
-    shared_indexes[pa] = n;
-    shared_indexes[pb] = n;
+    gpio_to_n[pa] = n;
+    gpio_to_n[pb] = n;
 
     gpioSetMode(pa, PI_INPUT);
     gpioSetMode(pb, PI_INPUT);
@@ -128,6 +146,10 @@ void setup_rotary_encoder(int pa, int pb, int n){
 
 void child_setup(){
   setup_rotary_encoder(18,23,0);
+  setup_rotary_encoder(14,15,1);
+
+  shared_indexes[0] = 0;
+  shared_indexes[1] = 2;
 }
 #endif 
 
@@ -307,7 +329,7 @@ double lin_adsr(Note *n, clock_t now){
   double a = *(main_adsr_params.a), d = *(main_adsr_params.d),
 	 s = *(main_adsr_params.s), r = *(main_adsr_params.s);
 
-  fprintf(logfile, "%lf %lf %lf %lf\n", a,d,s,r);
+  //fprintf(logfile, "%lf %lf %lf %lf\n", a,d,s,r);
   if( n->release == -1 ){
 
     if( x > a + d ){
@@ -394,7 +416,7 @@ void control_loop(){
   if ((getuid ()) != 0)
     printf ("You are not root! This may not work...n/");
 
-  device = "/dev/input/event4";
+  device = "/dev/input/event0";
   //Open Device
   if ((fd = open (device, O_RDONLY)) == -1)
     printf ("%s is not a vaild device.n", device);
@@ -412,17 +434,17 @@ void control_loop(){
     code = ev[0].code;
     if (value !=2 && ev[0].type == 1){
       //got char
-      printf ("Code[%d] %d \n", code, value);
+      /* printf ("Code[%d] %d \r\n", code, value); */
       fflush(stdout);
-      printf ("Code = %d \n",code);
+      /* printf ("Code = %d \r\n",code); */
 
       if( code == 59 ){
 	shared_values[0] -= 200;
-	printf("\r\nF1 flow: %lf\r\n", shared_values[0]);
+	/* printf("\r\nF1 flow: %lf\r\n", shared_values[0]); */
 	continue;
       } else if (code == 60){
 	shared_values[0] += 200;
-	printf("\r\nF2 flow: %lf\r\n", shared_values[0]);
+	/* printf("\r\nF2 flow: %lf\r\n", shared_values[0]); */
 	continue;
       }
 
@@ -487,6 +509,8 @@ double get_new_sample(){
       // wrzucamy do filtra bandpass:
 
       res = get_filtered_sample(&main_filter, res);
+
+      return res;
 }
 
 
@@ -494,6 +518,8 @@ double get_new_sample(){
 int main(int argc, char *argv[]) {
 
   logfile = fopen("logfile", "w");
+
+  printf("CLOCKS_PER_SEC: %ld\n", CLOCKS_PER_SEC);
 
   shared_indexes = mmap(NULL, 6*sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   shared_values = mmap(NULL, 32*sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -524,6 +550,7 @@ int main(int argc, char *argv[]) {
     }
 
     child_setup();
+    printf("while1 started\r\n");
     while(1){}
 
     exit(EXIT_SUCCESS);
