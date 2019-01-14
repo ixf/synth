@@ -919,7 +919,7 @@ int main(int argc, char *argv[]) {
   if((child = fork()) == 0){
     prctl(PR_SET_PDEATHSIG, SIGHUP);
     if (gpioInitialise()<0){
-	    printf("init failed\n");
+      printf("init failed\n");
       return 1;
     }
 
@@ -940,20 +940,10 @@ int main(int argc, char *argv[]) {
 
   struct option long_option[] =
   {
-    {"help", 0, NULL, 'h'},
     {"device", 1, NULL, 'D'},
-    {"rate", 1, NULL, 'r'},
-    {"channels", 1, NULL, 'c'},
-    {"frequency", 1, NULL, 'f'},
-    {"buffer", 1, NULL, 'b'},
-    {"period", 1, NULL, 'p'},
-    {"method", 1, NULL, 'm'},
-    {"format", 1, NULL, 'o'},
-    {"verbose", 1, NULL, 'v'},
-    {"noresample", 1, NULL, 'n'},
-    {"pevent", 1, NULL, 'e'},
     {NULL, 0, NULL, 0},
   };
+
   snd_pcm_t *handle;
   int err, morehelp;
   snd_pcm_hw_params_t *hwparams;
@@ -964,82 +954,18 @@ int main(int argc, char *argv[]) {
   snd_pcm_channel_area_t *areas;
   snd_pcm_hw_params_alloca(&hwparams);
   snd_pcm_sw_params_alloca(&swparams);
-  morehelp = 0;
+
   while (1) {
     int c;
     if ((c = getopt_long(argc, argv, "hD:r:c:f:b:p:m:o:vne", long_option, NULL)) < 0)
       break;
     switch (c) {
-      case 'h':
-        morehelp++;
-        break;
       case 'D':
         device = strdup(optarg);
         break;
-      case 'r':
-        rate = atoi(optarg);
-        rate = rate < 4000 ? 4000 : rate;
-        rate = rate > 196000 ? 196000 : rate;
-        break;
-      case 'c':
-        channels = atoi(optarg);
-        channels = channels < 1 ? 1 : channels;
-        channels = channels > 1024 ? 1024 : channels;
-        break;
-      case 'f':
-        freq = atoi(optarg);
-        freq = freq < 50 ? 50 : freq;
-        freq = freq > 5000 ? 5000 : freq;
-        break;
-      case 'b':
-        buffer_time = atoi(optarg);
-        buffer_time = buffer_time < 1000 ? 1000 : buffer_time;
-        buffer_time = buffer_time > 1000000 ? 1000000 : buffer_time;
-        break;
-      case 'p':
-        period_time = atoi(optarg);
-        period_time = period_time < 1000 ? 1000 : period_time;
-        period_time = period_time > 1000000 ? 1000000 : period_time;
-        break;
-      case 'm':
-        for (method = 0; transfer_methods[method].name; method++)
-          if (!strcasecmp(transfer_methods[method].name, optarg))
-            break;
-        if (transfer_methods[method].name == NULL)
-          method = 0;
-        break;
-      case 'o':
-        for (format = 0; format < SND_PCM_FORMAT_LAST; format++) {
-          const char *format_name = snd_pcm_format_name(format);
-          if (format_name)
-            if (!strcasecmp(format_name, optarg))
-              break;
-        }
-        if (format == SND_PCM_FORMAT_LAST)
-          format = SND_PCM_FORMAT_S16;
-        if (!snd_pcm_format_linear(format) &&
-            !(format == SND_PCM_FORMAT_FLOAT_LE ||
-              format == SND_PCM_FORMAT_FLOAT_BE)) {
-          printf("Invalid (non-linear/float) format %s\n",
-              optarg);
-          return 1;
-        }
-        break;
-      case 'v':
-        verbose = 1;
-        break;
-      case 'n':
-        resample = 0;
-        break;
-      case 'e':
-        period_event = 1;
-        break;
     }
   }
-  if (morehelp) {
-    help();
-    return 0;
-  }
+
   err = snd_output_stdio_attach(&output, stdout, 0);
   if (err < 0) {
     printf("Output failed: %s\n", snd_strerror(err));
