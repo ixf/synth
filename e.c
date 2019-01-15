@@ -55,13 +55,15 @@ typedef struct {
   double step;
 } range;
 
-range value_ranges[6] = {
+range value_ranges[] = {
   {0, 8000, 100},
   {0, 8000, 100},
   {0, 5, 0.01},
   {0, 5, 0.01},
   {0, 1, 0.01},
-  {0, 5, 0.01}
+  {0, 5, 0.01},
+  {0, 1, 0.10},
+  {0, 1, 0.10}
 };
 
 // tablica zmiennych ( przyjęliśmy że z zakresu 0-255 )
@@ -155,8 +157,13 @@ void setup_rotary_encoder(int pa, int pb, int n){
 void child_setup(){
   setup_rotary_encoder(18,23,0);
   setup_rotary_encoder(14,15,1);
-  // brak konfiguracji
+  setup_rotary_encoder(24,25,2);
+  setup_rotary_encoder(8,7,3);
+
+  setup_rotary_encoder(1,12,4);
+  setup_rotary_encoder(16,20,5);
 }
+
 
 #endif 
 
@@ -342,7 +349,6 @@ double lin_adsr(Note *n, long long now){
   double a = *(main_adsr_params.a), d = *(main_adsr_params.d),
 	 s = *(main_adsr_params.s), r = *(main_adsr_params.s);
 
-  //fprintf(logfile, "%lf %lf %lf %lf\n", a,d,s,r);
   if( n->release == -1 ){
 
     if( x > a + d ){
@@ -430,7 +436,7 @@ void control_loop(){
     printf ("You are not root! This may not work...n/");
 
 #if MAKE_PI
-  device = "/dev/input/event0";
+  device = "/dev/input/event1";
 #else
   device = "/dev/input/event4";
 #endif
@@ -515,6 +521,8 @@ double get_new_sample(){
 	wave w2 = waves[wave2_index];
 	double osc_total = w1.fun(n->phase) * *(weight[0]) + w2.fun(n->phase) * (*weight[1]);
 
+	/* fprintf(logfile, "osc total %lf\n", osc_total); */
+
 	// efekt ADSR
 	osc_total = osc_total * adsr_val * maxval;
 
@@ -527,8 +535,6 @@ double get_new_sample(){
 
 	res += osc_total;
       }
-
-      res /= 10.0;
 
       // teraz res jest wartością z sumy wszystkich Note
       // wrzucamy do filtra bandpass:
