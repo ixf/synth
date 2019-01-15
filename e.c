@@ -26,11 +26,19 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <linux/input.h>
+
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/select.h>
-#include <sys/time.h>
 #include <termios.h>
+
+long long get_time() {
+    struct timeval te; 
+    gettimeofday(&te, NULL);
+    long long microseconds = te.tv_sec*1000000LL + te.tv_usec;
+    return microseconds;
+}
  
 #include "alsa_stuff.h"
 #include "main.h"
@@ -112,8 +120,7 @@ void rot_callback(int GPIO, int level, unsigned int tick){
   if(rs->state == 1 || rs->state == 7 || rs->state == 14 || rs->state == 8){
     double now = shared_values[shared_index] += r.step;
     printf("> sv[%d] := %lf\r\n", shared_index, now);
-  }
-  else if(rs->state == 4 || rs->state == 13 || rs->state == 2 || rs->state == 11){
+  } else if(rs->state == 4 || rs->state == 13 || rs->state == 2 || rs->state == 11){
     double now = shared_values[shared_index] -= r.step;
     printf("sv[%d] := %lf\n", shared_index, now);
   }
@@ -287,8 +294,8 @@ double get_filtered_sample(BandpassFilter* f, double in){
 
 
 typedef struct {
-	clock_t attack;
-	clock_t release;
+	long long attack;
+	long long release;
 	double freq;
 	double step;
 	double phase;
@@ -298,7 +305,7 @@ typedef struct {
 
 //**************************************** ADSR
 
-double bad_adsr(Note *n, clock_t now){
+double bad_adsr(Note *n, long long now){
 	if(n->release == -1){
 		return 1.0;
 	}
@@ -324,7 +331,7 @@ typedef struct {
 
 adsr_params main_adsr_params;
 
-double lin_adsr(Note *n, clock_t now){
+double lin_adsr(Note *n, long long now){
   double x = (now - n->attack)/((double)CLOCKS_PER_SEC);
   double a = *(main_adsr_params.a), d = *(main_adsr_params.d),
 	 s = *(main_adsr_params.s), r = *(main_adsr_params.s);
@@ -392,7 +399,7 @@ void init_piano_keys(int starting, int* keys, int count){
 	}
 }
 
-double (*main_adsr)(Note* note, clock_t now);
+double (*main_adsr)(Note* note, long long now);
 BandpassFilter main_filter;
 Note all_notes[104];
 
@@ -416,7 +423,11 @@ void control_loop(){
   if ((getuid ()) != 0)
     printf ("You are not root! This may not work...n/");
 
+#if MAKE_PI
   device = "/dev/input/event0";
+#else
+  device = "/dev/input/event4";
+#endif
   //Open Device
   if ((fd = open (device, O_RDONLY)) == -1)
     printf ("%s is not a vaild device.n", device);
@@ -435,16 +446,23 @@ void control_loop(){
     if (value !=2 && ev[0].type == 1){
       //got char
       /* printf ("Code[%d] %d \r\n", code, value); */
-      fflush(stdout);
+      /* fflush(stdout); */
       /* printf ("Code = %d \r\n",code); */
 
-      if( code == 59 ){
-	shared_values[0] -= 200;
-	/* printf("\r\nF1 flow: %lf\r\n", shared_values[0]); */
+      if( value == 1 && code == 59 ){
+	printf("F1 set 0: \r\n");
+	//todo
 	continue;
-      } else if (code == 60){
-	shared_values[0] += 200;
-	/* printf("\r\nF2 flow: %lf\r\n", shared_values[0]); */
+      } else if (value == 1 && code == 60){
+	printf("F2 set 1: \r\n");
+	continue;
+      } else if (value == 1 && code == 61){
+	wave1_index = (wave1_index+1)%7;
+	printf("F3 fala 1 to teraz: %s\r\n", waves[wave1_index].name);
+	continue;
+      } else if (value == 1 && code == 62){
+	wave2_index = (wave2_index+1)%7;
+	printf("F4 fala 2 to teraz: %s\r\n", waves[wave2_index].name);
 	continue;
       }
 
@@ -453,11 +471,11 @@ void control_loop(){
 	//PRESS
 	all_notes[note].phase = 0.0;
 	all_notes[note].active = true;
-	all_notes[note].attack = clock();
+	all_notes[note].attack = get_time();
 	all_notes[note].release = -1;
       }else{
 	//RELEASE
-	all_notes[note].release = clock();
+	all_notes[note].release = get_time();
       }
     }
   }  
@@ -476,7 +494,7 @@ double get_new_sample(){
 
       int res = 0;
 
-      clock_t clock_now = clock();
+      long long clock_now = get_time();
       for(int i = 28; i <= 68; i++){
 	Note* n = &(all_notes[i]);
 
@@ -519,17 +537,20 @@ int main(int argc, char *argv[]) {
 
   logfile = fopen("logfile", "w");
 
-  printf("CLOCKS_PER_SEC: %ld\n", CLOCKS_PER_SEC);
-
   shared_indexes = mmap(NULL, 6*sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   shared_values = mmap(NULL, 32*sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-  shared_values[0] = 3000;
-  shared_values[1] = 4000;
-  shared_values[2] = 0.05;
-  shared_values[3] = 0.05;
-  shared_values[4] = 0.1;
-  shared_values[5] = 0.0;
+  shared_values[0] = 3000; // dolna granica filtra
+  shared_values[1] = 4000; // górna granica filtra
+
+  shared_values[2] = 0.05; // a
+  shared_values[3] = 0.05; // d
+  shared_values[4] = 0.1; // s
+  shared_values[5] = 0.0; // r
+
+  shared_values [6] = 0.5; // master volume
+  shared_values [7] = 0.5; // waga fali 1
+  shared_values [8] = 0.5; // waga fali 2
 
   main_adsr_params.a = &(shared_values[2]);
   main_adsr_params.d = &(shared_values[3]);
