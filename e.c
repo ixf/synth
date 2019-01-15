@@ -152,17 +152,19 @@ void setup_rotary_encoder(int pa, int pb, int n){
 }
 
 
+void child_setup(){
+  setup_rotary_encoder(18,23,0);
+  setup_rotary_encoder(14,15,1);
+  // brak konfiguracji
+}
+
+#endif 
+
 void set_shared_indexes(int start){
   for(int i = 0; i < 6; i++)
     shared_indexes[i] = i+start;
 }
 
-void child_setup(){
-  setup_rotary_encoder(18,23,0);
-  setup_rotary_encoder(14,15,1);
-
-}
-#endif 
 
 // **************************************** FALE
 
@@ -218,7 +220,7 @@ wave waves[7] = {
   {"prostokątna", square_wave },
 };
 
-double weight[2] = { 0.5, 0.5 };
+double* weight[2];
 int wave1_index = 0;
 int wave2_index = 1;
 
@@ -511,7 +513,7 @@ double get_new_sample(){
 	// suma z dwóch fal:
 	wave w1 = waves[wave1_index];
 	wave w2 = waves[wave2_index];
-	double osc_total = w1.fun(n->phase) * weight[0] + w2.fun(n->phase) * weight[1];
+	double osc_total = w1.fun(n->phase) * *(weight[0]) + w2.fun(n->phase) * (*weight[1]);
 
 	// efekt ADSR
 	osc_total = osc_total * adsr_val * maxval;
@@ -564,6 +566,9 @@ int main(int argc, char *argv[]) {
 
   main_adsr = lin_adsr;
   init_bpf( &(main_filter), &(shared_values[0]), &(shared_values[1]), 17);
+
+  weight[0] = &(shared_values[7]);
+  weight[1] = &(shared_values[8]);
 
   set_shared_indexes(0);
 
