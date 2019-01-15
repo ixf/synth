@@ -70,6 +70,11 @@ range value_ranges[] = {
 // wartości zmienia fork, odczytuje główny
 static double* shared_values;
 
+char* shared_names[] = {
+  "freq low", "freq high",
+  "attack", "delay" ,"sustain", "release",
+  "waga fun1", "waga fun2" };
+
 #ifdef MAKE_PI
 typedef struct {
   int last_a;
@@ -88,8 +93,6 @@ void rot_callback(int GPIO, int level, unsigned int tick){
   int ab = gpio_to_ab[GPIO];
 
   rotary_state* rs = &(rotary_states[n]);
-
-  printf("rot callback!\n");
 
   rs->state <<= 2;
   if(ab == 0){
@@ -118,19 +121,19 @@ void rot_callback(int GPIO, int level, unsigned int tick){
   int shared_index = shared_indexes[n];
   range r = value_ranges[shared_index];
 
-  printf("< sv[%d] := %lf\r\n", shared_index, shared_values[shared_index]);
   if(rs->state == 1 || rs->state == 7 || rs->state == 14 || rs->state == 8){
-    double now = shared_values[shared_index] += r.step;
-    printf("> sv[%d] := %lf\r\n", shared_index, now);
+    shared_values[shared_index] += r.step;
   } else if(rs->state == 4 || rs->state == 13 || rs->state == 2 || rs->state == 11){
-    double now = shared_values[shared_index] -= r.step;
-    printf("sv[%d] := %lf\n", shared_index, now);
+    shared_values[shared_index] -= r.step;
   }
 
   if(shared_values[shared_index] > r.max)
     shared_values[shared_index] = r.max;
   else if (shared_values[shared_index] < r.min)
     shared_values[shared_index] = r.min;
+
+  double now = shared_values[shared_index];
+  printf("%s := %lf\r\n", shared_names[shared_index], now);
 }
 
 void setup_rotary_encoder(int pa, int pb, int n){
