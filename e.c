@@ -151,12 +151,16 @@ void setup_rotary_encoder(int pa, int pb, int n){
     /* gpioTerminate(); */
 }
 
+
+void set_shared_indexes(int start){
+  for(int i = 0; i < 6; i++)
+    shared_indexes[i] = i+start;
+}
+
 void child_setup(){
   setup_rotary_encoder(18,23,0);
   setup_rotary_encoder(14,15,1);
 
-  shared_indexes[0] = 0;
-  shared_indexes[1] = 2;
 }
 #endif 
 
@@ -450,11 +454,12 @@ void control_loop(){
       /* printf ("Code = %d \r\n",code); */
 
       if( value == 1 && code == 59 ){
-	printf("F1 set 0: \r\n");
-	//todo
+	printf("F1 set 0-5\r\n");
+	set_shared_indexes(0);
 	continue;
       } else if (value == 1 && code == 60){
-	printf("F2 set 1: \r\n");
+	printf("F2 set 6-11\r\n");
+	set_shared_indexes(6);
 	continue;
       } else if (value == 1 && code == 61){
 	wave1_index = (wave1_index+1)%7;
@@ -559,6 +564,8 @@ int main(int argc, char *argv[]) {
 
   main_adsr = lin_adsr;
   init_bpf( &(main_filter), &(shared_values[0]), &(shared_values[1]), 17);
+
+  set_shared_indexes(0);
 
 #ifdef MAKE_PI
   int child;
